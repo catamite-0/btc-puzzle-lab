@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -12,8 +13,14 @@ from btc_puzzle_lab.crypto import (
     privkey_bytes,
     privkey_to_p2pkh_address,
     sequential_find_p2pkh,
+    sequential_find_p2pkh_parallel,
 )
 from btc_puzzle_lab.hits import Hit, append_hit, utc_now
+from btc_puzzle_lab.paths import scan_checkpoint_path
+from btc_puzzle_lab.runlog import log_event
+
+# Soft cap for pure-Python sequential full-range scans on 2 CPU / 2 GiB hosts.
+MAX_SEQUENTIAL_KEYS = 2_000_000
 
 
 @dataclass(frozen=True)
@@ -21,6 +28,27 @@ class SearchOutcome:
     hit: Hit | None
     engine: str
     message: str
+    duplicate: bool = False
+
+
+@dataclass(frozen=True)
+class ScanCheckpoint:
+    puzzle_id: int
+    engine: str
+    next_secret: int
+    end: int
+    updated_at: str
+
+    def to_dict(self) -> dict:
+        return {
+            "puzzle_id": self.puzzle_id,
+            "engine": self.engine,
+            "next_secret": self.next_secret,
+            "end": self.end,
+            "next_secret_hex": f"{self.next_secret:x}",
+            "end_hex": f"{self.end:x}",
+            "updated_at": self.updated_at,
+        }
 
 
 def _make_hit(puzzle: Puzzle, secret: int, engine: str) -> Hit:
@@ -38,28 +66,204 @@ def _make_hit(puzzle: Puzzle, secret: int, engine: str) -> Hit:
     )
 
 
-def run_sequential(puzzle: Puzzle, *, start: int | None = None, end: int | None = None) -> SearchOutcome:
-    lo = puzzle.range_start if start is None else start
-    hi = puzzle.range_end if end is None else end
-    if hi - lo > 2_000_000:
+def _record_hit(puzzle: Puzzle, secret: int, engine: str) -> SearchOutcome:
+    hit = _make_hit(puzzle, secret, engine)
+    result = append_hit(hit)
+    if result.duplicate:
+        log_event(
+            "search_duplicate",
+            puzzle_id=puzzle.id,
+            engine=engine,
+            address=hit.address,
+        )
+        return SearchOutcome(
+            hit=hit,
+            engine=engine,
+            message="hit already recorded (deduped)",
+            duplicate=True,
+        )
+    log_event(
+        "search_hit",
+        puzzle_id=puzzle.id,
+        engine=engine,
+        address=hit.address,
+        bits=puzzle.bits,
+    )
+    return SearchOutcome(hit=hit, engine=engine, message="hit recorded")
+
+
+def load_checkpoint(puzzle_id: int, path: Path | None = None) -> ScanCheckpoint | None:
+    target = path or scan_checkpoint_path(puzzle_id)
+    if not target.exists():
+        return None
+    row = json.loads(target.read_text(encoding="utf-8"))
+    return ScanCheckpoint(
+        puzzle_id=int(row["puzzle_id"]),
+        engine=str(row["engine"]),
+        next_secret=int(row["next_secret"]),
+        end=int(row["end"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def save_checkpoint(checkpoint: ScanCheckpoint, path: Path | None = None) -> Path:
+    from btc_puzzle_lab.hits import ensure_state_dir
+
+    ensure_state_dir()
+    target = path or scan_checkpoint_path(checkpoint.puzzle_id)
+    target.write_text(json.dumps(checkpoint.to_dict(), indent=2, sort_keys=True) + "\n")
+    os.chmod(target, 0o600)
+    return target
+
+
+def clear_checkpoint(puzzle_id: int, path: Path | None = None) -> None:
+    target = path or scan_checkpoint_path(puzzle_id)
+    if target.exists():
+        target.unlink()
+
+
+def _progress_printer(puzzle: Puzzle, engine: str, end: int, *, show: bool):
+    def _cb(checked: int, secret: int, rate: float) -> None:
+        save_checkpoint(
+            ScanCheckpoint(
+                puzzle_id=puzzle.id,
+                engine=engine,
+                next_secret=secret + 1,
+                end=end,
+                updated_at=utc_now(),
+            )
+        )
+        if show:
+            remaining = max(end - secret, 0)
+            eta = remaining / rate if rate > 0 else 0
+            print(
+                f"… scanned {checked:,} keys @ {rate:,.0f} keys/s "
+                f"(at {secret:x}, eta ~{eta:,.0f}s)",
+                flush=True,
+            )
+
+    return _cb
+
+
+def _scan_range(
+    puzzle: Puzzle,
+    *,
+    lo: int,
+    hi: int,
+    engine: str,
+    workers: int = 1,
+    resume: bool = False,
+    progress: bool = True,
+    enforce_cap: bool = True,
+) -> SearchOutcome:
+    if resume:
+        ckpt = load_checkpoint(puzzle.id)
+        if ckpt is not None and ckpt.engine == engine and ckpt.end == hi:
+            if ckpt.next_secret > hi:
+                clear_checkpoint(puzzle.id)
+                return SearchOutcome(
+                    hit=None,
+                    engine=engine,
+                    message="checkpoint already past end; cleared",
+                )
+            lo = max(lo, ckpt.next_secret)
+            print(f"resuming puzzle #{puzzle.id} from {lo:x}", flush=True)
+    if lo > hi:
+        clear_checkpoint(puzzle.id)
+        return SearchOutcome(hit=None, engine=engine, message="empty scan range")
+    if enforce_cap and hi - lo + 1 > MAX_SEQUENTIAL_KEYS:
         return SearchOutcome(
             hit=None,
-            engine="sequential",
+            engine=engine,
             message=(
                 f"range too large for sequential engine ({hi - lo + 1:,} keys). "
                 "Use --window for practice, or --engine keyhunt if configured."
             ),
         )
-    print(f"sequential scan puzzle #{puzzle.id} range {lo:x}:{hi:x}", flush=True)
-    secret = sequential_find_p2pkh(puzzle.address, lo, hi)
+    workers = max(1, workers)
+    print(
+        f"{engine} scan puzzle #{puzzle.id} range {lo:x}:{hi:x} workers={workers}",
+        flush=True,
+    )
+    log_event(
+        "search_start",
+        puzzle_id=puzzle.id,
+        engine=engine,
+        start_hex=f"{lo:x}",
+        end_hex=f"{hi:x}",
+        workers=workers,
+        resume=resume,
+    )
+    if workers == 1:
+        secret = sequential_find_p2pkh(
+            puzzle.address,
+            lo,
+            hi,
+            on_progress=_progress_printer(puzzle, engine, hi, show=progress),
+            progress_every=50_000 if (progress or resume) else 0,
+        )
+    else:
+
+        def on_chunk(chunk_lo: int, chunk_hi: int, found: int | None) -> None:
+            save_checkpoint(
+                ScanCheckpoint(
+                    puzzle_id=puzzle.id,
+                    engine=engine,
+                    next_secret=chunk_hi + 1,
+                    end=hi,
+                    updated_at=utc_now(),
+                )
+            )
+            if progress:
+                status = "HIT" if found is not None else "done"
+                print(f"… chunk {chunk_lo:x}:{chunk_hi:x} {status}", flush=True)
+
+        secret = sequential_find_p2pkh_parallel(
+            puzzle.address,
+            lo,
+            hi,
+            workers=workers,
+            on_chunk_done=on_chunk,
+        )
     if secret is None:
-        return SearchOutcome(hit=None, engine="sequential", message="no match in range")
-    hit = _make_hit(puzzle, secret, "sequential")
-    append_hit(hit)
-    return SearchOutcome(hit=hit, engine="sequential", message="hit recorded")
+        clear_checkpoint(puzzle.id)
+        log_event("search_miss", puzzle_id=puzzle.id, engine=engine)
+        return SearchOutcome(hit=None, engine=engine, message="no match in range")
+    clear_checkpoint(puzzle.id)
+    return _record_hit(puzzle, secret, engine)
 
 
-def run_window(puzzle: Puzzle, *, window: int = 1_000_000) -> SearchOutcome:
+def run_sequential(
+    puzzle: Puzzle,
+    *,
+    start: int | None = None,
+    end: int | None = None,
+    workers: int = 1,
+    resume: bool = False,
+    progress: bool = True,
+) -> SearchOutcome:
+    lo = puzzle.range_start if start is None else start
+    hi = puzzle.range_end if end is None else end
+    return _scan_range(
+        puzzle,
+        lo=lo,
+        hi=hi,
+        engine="sequential",
+        workers=workers,
+        resume=resume,
+        progress=progress,
+        enforce_cap=True,
+    )
+
+
+def run_window(
+    puzzle: Puzzle,
+    *,
+    window: int = 1_000_000,
+    workers: int = 1,
+    resume: bool = False,
+    progress: bool = True,
+) -> SearchOutcome:
     if puzzle.practice_solution is None:
         return SearchOutcome(
             hit=None,
@@ -73,16 +277,20 @@ def run_window(puzzle: Puzzle, *, window: int = 1_000_000) -> SearchOutcome:
     lo = max(puzzle.range_start, center - half)
     hi = min(puzzle.range_end, center + half)
     print(
-        f"practice window scan puzzle #{puzzle.id} "
+        f"practice window puzzle #{puzzle.id} "
         f"[{lo:x}, {hi:x}] ({hi - lo + 1:,} keys)",
         flush=True,
     )
-    secret = sequential_find_p2pkh(puzzle.address, lo, hi)
-    if secret is None:
-        return SearchOutcome(hit=None, engine="window", message="no match in practice window")
-    hit = _make_hit(puzzle, secret, "window")
-    append_hit(hit)
-    return SearchOutcome(hit=hit, engine="window", message="hit recorded")
+    return _scan_range(
+        puzzle,
+        lo=lo,
+        hi=hi,
+        engine="window",
+        workers=workers,
+        resume=resume,
+        progress=progress,
+        enforce_cap=False,
+    )
 
 
 def run_inject_known(puzzle: Puzzle) -> SearchOutcome:
@@ -93,9 +301,7 @@ def run_inject_known(puzzle: Puzzle) -> SearchOutcome:
             engine="inject-known",
             message="no practice_solution_hex in catalog",
         )
-    hit = _make_hit(puzzle, puzzle.practice_solution, "inject-known")
-    append_hit(hit)
-    return SearchOutcome(hit=hit, engine="inject-known", message="known solution recorded")
+    return _record_hit(puzzle, puzzle.practice_solution, "inject-known")
 
 
 def resolve_keyhunt_path() -> Path | None:
@@ -142,6 +348,12 @@ def run_keyhunt(puzzle: Puzzle, *, threads: int = 2) -> SearchOutcome:
             "-q",
         ]
         print("running:", " ".join(cmd), flush=True)
+        log_event(
+            "search_start",
+            puzzle_id=puzzle.id,
+            engine="keyhunt",
+            threads=threads,
+        )
         proc = subprocess.run(
             cmd,
             cwd=tmp,
@@ -152,14 +364,18 @@ def run_keyhunt(puzzle: Puzzle, *, threads: int = 2) -> SearchOutcome:
         output = (proc.stdout or "") + "\n" + (proc.stderr or "")
         secret = _parse_keyhunt_privkey(output)
         if secret is None:
+            log_event(
+                "search_miss",
+                puzzle_id=puzzle.id,
+                engine="keyhunt",
+                exit_code=proc.returncode,
+            )
             return SearchOutcome(
                 hit=None,
                 engine="keyhunt",
                 message=f"keyhunt exited {proc.returncode}; no private key parsed",
             )
-        hit = _make_hit(puzzle, secret, "keyhunt")
-        append_hit(hit)
-        return SearchOutcome(hit=hit, engine="keyhunt", message="hit recorded")
+        return _record_hit(puzzle, secret, "keyhunt")
 
 
 def _parse_keyhunt_privkey(output: str) -> int | None:
@@ -174,7 +390,6 @@ def _parse_keyhunt_privkey(output: str) -> int | None:
                         return int(normalize_privkey_hex(token), 16)
                     except ValueError:
                         continue
-    # Also accept KEYHUNT HIT files if present in CWD of subprocess — handled by stdout primarily.
     return None
 
 
@@ -184,12 +399,26 @@ def run_puzzle(
     engine: str | None = None,
     window: int = 1_000_000,
     threads: int = 2,
+    workers: int = 1,
+    resume: bool = False,
+    progress: bool = True,
 ) -> SearchOutcome:
     choice = (engine or puzzle.engine_default).lower()
     if choice in {"sequential", "seq"}:
-        return run_sequential(puzzle)
+        return run_sequential(
+            puzzle,
+            workers=workers,
+            resume=resume,
+            progress=progress,
+        )
     if choice in {"window", "practice-window"}:
-        return run_window(puzzle, window=window)
+        return run_window(
+            puzzle,
+            window=window,
+            workers=workers,
+            resume=resume,
+            progress=progress,
+        )
     if choice in {"inject", "inject-known", "known"}:
         return run_inject_known(puzzle)
     if choice == "keyhunt":

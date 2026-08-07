@@ -1,7 +1,7 @@
 [project]
 name = "btc-puzzle-lab"
-version = "0.1.0"
-description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → local audit"
+version = "0.2.0"
+description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → audit → optional sweep"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

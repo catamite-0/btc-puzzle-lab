@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import base58
 from cryptography.exceptions import InvalidSignature
@@ -14,6 +17,8 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
 )
+
+ProgressCallback = Callable[[int, int, float], None]
 
 # secp256k1 curve order and field prime
 SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
@@ -273,6 +278,7 @@ def sequential_find_p2pkh(
     end: int,
     *,
     progress_every: int = 50_000,
+    on_progress: ProgressCallback | None = None,
 ) -> int | None:
     """Scan inclusive [start, end]; return matching private key int or None."""
     if start < 1 or end >= SECP256K1_N or start > end:
@@ -283,6 +289,7 @@ def sequential_find_p2pkh(
     if point is None:
         raise ValueError("invalid start point")
     checked = 0
+    t0 = time.monotonic()
     for secret in range(start, end + 1):
         pub = _point_to_compressed(point)
         if hash160(pub) == target:
@@ -292,5 +299,66 @@ def sequential_find_p2pkh(
             raise RuntimeError("unexpected point at infinity during scan")
         checked += 1
         if progress_every and checked % progress_every == 0:
-            print(f"… scanned {checked:,} keys (at {secret:x})", flush=True)
+            elapsed = max(time.monotonic() - t0, 1e-9)
+            rate = checked / elapsed
+            if on_progress is not None:
+                on_progress(checked, secret, rate)
+            else:
+                print(
+                    f"… scanned {checked:,} keys @ {rate:,.0f} keys/s (at {secret:x})",
+                    flush=True,
+                )
+    return None
+
+
+def _sequential_find_chunk(args: tuple[str, int, int]) -> int | None:
+    target_address, start, end = args
+    return sequential_find_p2pkh(target_address, start, end, progress_every=0)
+
+
+def split_range(start: int, end: int, workers: int) -> list[tuple[int, int]]:
+    """Split inclusive [start, end] into up to `workers` contiguous chunks."""
+    if workers < 1:
+        raise ValueError("workers must be >= 1")
+    total = end - start + 1
+    if total <= 0:
+        return []
+    n = min(workers, total)
+    base, rem = divmod(total, n)
+    chunks: list[tuple[int, int]] = []
+    cursor = start
+    for i in range(n):
+        size = base + (1 if i < rem else 0)
+        chunk_end = cursor + size - 1
+        chunks.append((cursor, chunk_end))
+        cursor = chunk_end + 1
+    return chunks
+
+
+def sequential_find_p2pkh_parallel(
+    target_address: str,
+    start: int,
+    end: int,
+    *,
+    workers: int = 2,
+    on_chunk_done: Callable[[int, int, int | None], None] | None = None,
+) -> int | None:
+    """Scan inclusive [start, end] with process workers; first hit wins."""
+    chunks = split_range(start, end, workers)
+    if len(chunks) == 1:
+        return sequential_find_p2pkh(target_address, start, end)
+    with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
+        futures = {
+            pool.submit(_sequential_find_chunk, (target_address, lo, hi)): (lo, hi)
+            for lo, hi in chunks
+        }
+        for fut in as_completed(futures):
+            lo, hi = futures[fut]
+            secret = fut.result()
+            if on_chunk_done is not None:
+                on_chunk_done(lo, hi, secret)
+            if secret is not None:
+                for other in futures:
+                    other.cancel()
+                return secret
     return None
