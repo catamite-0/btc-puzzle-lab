@@ -7,10 +7,11 @@ from pathlib import Path
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.audit import audit_hits, export_audit_report
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
+from btc_puzzle_lab.coverage import format_coverage, load_coverage
 from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.hits import read_hits
-from btc_puzzle_lab.paths import HITS_FILE
-from btc_puzzle_lab.search import run_puzzle
+from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
+from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
 from btc_puzzle_lab.summary import build_summary, format_summary
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
@@ -69,9 +70,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         workers=args.workers,
         resume=args.resume,
         progress=not args.no_progress,
+        coverage=args.coverage,
+        chunk_size=args.chunk_size,
+        order=args.order,
+        seed=args.seed,
+        max_chunks=args.max_chunks,
     )
     print(f"engine={outcome.engine}: {outcome.message}")
+    if outcome.coverage is not None:
+        print(format_coverage(outcome.coverage))
+        if outcome.chunks_scanned:
+            print(f"chunks_scanned={outcome.chunks_scanned}")
     if outcome.hit is None:
+        # Coverage exhaustion / partial miss is an informative non-hit, not a crash.
+        if outcome.coverage is not None and "coverage complete" in outcome.message:
+            return 0
         return 1
     print(f"hit puzzle #{outcome.hit.puzzle_id} address={outcome.hit.address}")
     print(f"recorded in {HITS_FILE}")
@@ -79,6 +92,30 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"private_key_hex={outcome.hit.private_key_hex}")
     if args.transfer:
         _print_transfer(sweep_hit(outcome.hit))
+    return 0
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    if args.puzzle is not None:
+        ledger = load_coverage(args.puzzle)
+        if ledger is None:
+            print(f"no coverage ledger at {coverage_path(args.puzzle)}")
+            return 1
+        print(format_coverage(ledger))
+        return 0
+    found = sorted(STATE_DIR.glob("coverage_*.json")) if STATE_DIR.exists() else []
+    if not found:
+        print(f"no coverage ledgers in {STATE_DIR}")
+        return 1
+    for path in found:
+        try:
+            puzzle_id = int(path.stem.split("_", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        ledger = load_coverage(puzzle_id)
+        if ledger is not None:
+            print(format_coverage(ledger))
+            print()
     return 0
 
 
@@ -207,6 +244,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="resume from state/scan_<id>.json checkpoint if present",
     )
     p_run.add_argument(
+        "--coverage",
+        action="store_true",
+        help="scan via coverage ledger chunks (skips already-done ranges)",
+    )
+    p_run.add_argument(
+        "--chunk-size",
+        type=int,
+        default=DEFAULT_CHUNK_SIZE,
+        help=f"coverage chunk size in keys (default: {DEFAULT_CHUNK_SIZE})",
+    )
+    p_run.add_argument(
+        "--order",
+        choices=["sequential", "random"],
+        default="sequential",
+        help="coverage chunk order (default: sequential)",
+    )
+    p_run.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for --order random (reproducible plans)",
+    )
+    p_run.add_argument(
+        "--max-chunks",
+        type=int,
+        default=None,
+        help="scan at most N pending/in-progress chunks this run",
+    )
+    p_run.add_argument(
         "--no-progress",
         action="store_true",
         help="disable progress / keys-per-second output",
@@ -222,6 +288,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="after a hit, attempt sweep transfer (respects AUTO_TRANSFER_* gates)",
     )
     p_run.set_defaults(func=cmd_run)
+
+    p_cov = sub.add_parser("coverage", help="show range coverage ledger status")
+    p_cov.add_argument(
+        "puzzle",
+        type=int,
+        nargs="?",
+        default=None,
+        help="puzzle id (default: list all local coverage ledgers)",
+    )
+    p_cov.set_defaults(func=cmd_coverage)
 
     p_audit = sub.add_parser("audit", help="verify recorded HITS locally")
     p_audit.add_argument(

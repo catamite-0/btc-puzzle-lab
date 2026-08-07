@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from btc_puzzle_lab.catalog import Puzzle
+from btc_puzzle_lab.coverage import (
+    CoverageLedger,
+    format_coverage,
+    get_or_create_coverage,
+    save_coverage,
+)
 from btc_puzzle_lab.crypto import (
     normalize_privkey_hex,
     privkey_bytes,
@@ -21,6 +27,7 @@ from btc_puzzle_lab.runlog import log_event
 
 # Soft cap for pure-Python sequential full-range scans on 2 CPU / 2 GiB hosts.
 MAX_SEQUENTIAL_KEYS = 2_000_000
+DEFAULT_CHUNK_SIZE = 65_536
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,8 @@ class SearchOutcome:
     engine: str
     message: str
     duplicate: bool = False
+    coverage: CoverageLedger | None = None
+    chunks_scanned: int = 0
 
 
 @dataclass(frozen=True)
@@ -145,6 +154,186 @@ def _progress_printer(puzzle: Puzzle, engine: str, end: int, *, show: bool):
     return _cb
 
 
+def _scan_contiguous(
+    puzzle: Puzzle,
+    *,
+    lo: int,
+    hi: int,
+    engine: str,
+    workers: int,
+    progress: bool,
+    resume_checkpoint: bool,
+) -> int | None:
+    """Scan one contiguous inclusive range; returns secret or None."""
+    workers = max(1, workers)
+    if workers == 1:
+        return sequential_find_p2pkh(
+            puzzle.address,
+            lo,
+            hi,
+            on_progress=_progress_printer(puzzle, engine, hi, show=progress),
+            progress_every=50_000 if (progress or resume_checkpoint) else 0,
+        )
+
+    def on_chunk(chunk_lo: int, chunk_hi: int, found: int | None) -> None:
+        save_checkpoint(
+            ScanCheckpoint(
+                puzzle_id=puzzle.id,
+                engine=engine,
+                next_secret=chunk_hi + 1,
+                end=hi,
+                updated_at=utc_now(),
+            )
+        )
+        if progress:
+            status = "HIT" if found is not None else "done"
+            print(f"… chunk {chunk_lo:x}:{chunk_hi:x} {status}", flush=True)
+
+    return sequential_find_p2pkh_parallel(
+        puzzle.address,
+        lo,
+        hi,
+        workers=workers,
+        on_chunk_done=on_chunk,
+    )
+
+
+def _scan_with_coverage(
+    puzzle: Puzzle,
+    *,
+    lo: int,
+    hi: int,
+    engine: str,
+    workers: int = 1,
+    progress: bool = True,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    order: str = "sequential",
+    seed: int | None = None,
+    max_chunks: int | None = None,
+) -> SearchOutcome:
+    ledger, created = get_or_create_coverage(
+        puzzle.id,
+        range_start=lo,
+        range_end=hi,
+        chunk_size=chunk_size,
+    )
+    if created:
+        print(
+            f"coverage ledger created puzzle #{puzzle.id} "
+            f"chunks={len(ledger.chunks)} size={chunk_size}",
+            flush=True,
+        )
+    else:
+        print(format_coverage(ledger), flush=True)
+
+    planned = ledger.plan(order=order, seed=seed, max_chunks=max_chunks)
+    if not planned:
+        log_event(
+            "coverage_complete",
+            puzzle_id=puzzle.id,
+            engine=engine,
+            coverage_ratio=round(ledger.coverage_ratio, 6),
+        )
+        return SearchOutcome(
+            hit=None,
+            engine=engine,
+            message=(
+                f"coverage complete ({ledger.coverage_ratio:.2%} of "
+                f"{ledger.total_keys:,} keys); nothing pending"
+            ),
+            coverage=ledger,
+        )
+
+    log_event(
+        "search_start",
+        puzzle_id=puzzle.id,
+        engine=engine,
+        mode="coverage",
+        order=order,
+        seed=seed,
+        chunk_size=chunk_size,
+        max_chunks=max_chunks,
+        planned_chunks=len(planned),
+        coverage_ratio=round(ledger.coverage_ratio, 6),
+        workers=workers,
+    )
+    print(
+        f"{engine}/coverage puzzle #{puzzle.id} order={order} "
+        f"planned={len(planned)} workers={workers}",
+        flush=True,
+    )
+
+    scanned = 0
+    for chunk in planned:
+        ledger.mark(chunk.index, "in_progress")
+        save_coverage(ledger)
+        if progress:
+            print(
+                f"… coverage chunk #{chunk.index} {chunk.start:x}:{chunk.end:x} "
+                f"({chunk.size:,} keys)",
+                flush=True,
+            )
+        secret = _scan_contiguous(
+            puzzle,
+            lo=chunk.start,
+            hi=chunk.end,
+            engine=engine,
+            workers=workers,
+            progress=progress,
+            resume_checkpoint=False,
+        )
+        scanned += 1
+        if secret is not None:
+            ledger.mark(chunk.index, "hit")
+            save_coverage(ledger)
+            clear_checkpoint(puzzle.id)
+            outcome = _record_hit(puzzle, secret, engine)
+            log_event(
+                "coverage_hit",
+                puzzle_id=puzzle.id,
+                chunk_index=chunk.index,
+                coverage_ratio=round(ledger.coverage_ratio, 6),
+                chunks_scanned=scanned,
+            )
+            return SearchOutcome(
+                hit=outcome.hit,
+                engine=engine,
+                message=outcome.message,
+                duplicate=outcome.duplicate,
+                coverage=ledger,
+                chunks_scanned=scanned,
+            )
+        ledger.mark(chunk.index, "done")
+        save_coverage(ledger)
+        clear_checkpoint(puzzle.id)
+        log_event(
+            "coverage_chunk_done",
+            puzzle_id=puzzle.id,
+            chunk_index=chunk.index,
+            coverage_ratio=round(ledger.coverage_ratio, 6),
+        )
+
+    log_event(
+        "search_miss",
+        puzzle_id=puzzle.id,
+        engine=engine,
+        mode="coverage",
+        chunks_scanned=scanned,
+        coverage_ratio=round(ledger.coverage_ratio, 6),
+    )
+    pending = ledger.counts()["pending"] + ledger.counts()["in_progress"]
+    return SearchOutcome(
+        hit=None,
+        engine=engine,
+        message=(
+            f"no match in {scanned} chunk(s); "
+            f"coverage={ledger.coverage_ratio:.2%}; pending_chunks={pending}"
+        ),
+        coverage=ledger,
+        chunks_scanned=scanned,
+    )
+
+
 def _scan_range(
     puzzle: Puzzle,
     *,
@@ -155,7 +344,38 @@ def _scan_range(
     resume: bool = False,
     progress: bool = True,
     enforce_cap: bool = True,
+    coverage: bool = False,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    order: str = "sequential",
+    seed: int | None = None,
+    max_chunks: int | None = None,
 ) -> SearchOutcome:
+    if coverage:
+        if lo > hi:
+            return SearchOutcome(hit=None, engine=engine, message="empty scan range")
+        # Cap applies to each planned chunk, not the whole puzzle range.
+        if enforce_cap and chunk_size > MAX_SEQUENTIAL_KEYS:
+            return SearchOutcome(
+                hit=None,
+                engine=engine,
+                message=(
+                    f"chunk_size too large for sequential engine ({chunk_size:,} keys). "
+                    f"Keep chunk_size <= {MAX_SEQUENTIAL_KEYS:,}."
+                ),
+            )
+        return _scan_with_coverage(
+            puzzle,
+            lo=lo,
+            hi=hi,
+            engine=engine,
+            workers=workers,
+            progress=progress,
+            chunk_size=chunk_size,
+            order=order,
+            seed=seed,
+            max_chunks=max_chunks,
+        )
+
     if resume:
         ckpt = load_checkpoint(puzzle.id)
         if ckpt is not None and ckpt.engine == engine and ckpt.end == hi:
@@ -177,7 +397,7 @@ def _scan_range(
             engine=engine,
             message=(
                 f"range too large for sequential engine ({hi - lo + 1:,} keys). "
-                "Use --window for practice, or --engine keyhunt if configured."
+                "Use --window / --coverage for practice, or --engine keyhunt if configured."
             ),
         )
     workers = max(1, workers)
@@ -194,37 +414,15 @@ def _scan_range(
         workers=workers,
         resume=resume,
     )
-    if workers == 1:
-        secret = sequential_find_p2pkh(
-            puzzle.address,
-            lo,
-            hi,
-            on_progress=_progress_printer(puzzle, engine, hi, show=progress),
-            progress_every=50_000 if (progress or resume) else 0,
-        )
-    else:
-
-        def on_chunk(chunk_lo: int, chunk_hi: int, found: int | None) -> None:
-            save_checkpoint(
-                ScanCheckpoint(
-                    puzzle_id=puzzle.id,
-                    engine=engine,
-                    next_secret=chunk_hi + 1,
-                    end=hi,
-                    updated_at=utc_now(),
-                )
-            )
-            if progress:
-                status = "HIT" if found is not None else "done"
-                print(f"… chunk {chunk_lo:x}:{chunk_hi:x} {status}", flush=True)
-
-        secret = sequential_find_p2pkh_parallel(
-            puzzle.address,
-            lo,
-            hi,
-            workers=workers,
-            on_chunk_done=on_chunk,
-        )
+    secret = _scan_contiguous(
+        puzzle,
+        lo=lo,
+        hi=hi,
+        engine=engine,
+        workers=workers,
+        progress=progress,
+        resume_checkpoint=resume,
+    )
     if secret is None:
         clear_checkpoint(puzzle.id)
         log_event("search_miss", puzzle_id=puzzle.id, engine=engine)
@@ -241,6 +439,11 @@ def run_sequential(
     workers: int = 1,
     resume: bool = False,
     progress: bool = True,
+    coverage: bool = False,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    order: str = "sequential",
+    seed: int | None = None,
+    max_chunks: int | None = None,
 ) -> SearchOutcome:
     lo = puzzle.range_start if start is None else start
     hi = puzzle.range_end if end is None else end
@@ -253,6 +456,11 @@ def run_sequential(
         resume=resume,
         progress=progress,
         enforce_cap=True,
+        coverage=coverage,
+        chunk_size=chunk_size,
+        order=order,
+        seed=seed,
+        max_chunks=max_chunks,
     )
 
 
@@ -263,6 +471,11 @@ def run_window(
     workers: int = 1,
     resume: bool = False,
     progress: bool = True,
+    coverage: bool = False,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    order: str = "sequential",
+    seed: int | None = None,
+    max_chunks: int | None = None,
 ) -> SearchOutcome:
     if puzzle.practice_solution is None:
         return SearchOutcome(
@@ -290,6 +503,11 @@ def run_window(
         resume=resume,
         progress=progress,
         enforce_cap=False,
+        coverage=coverage,
+        chunk_size=chunk_size,
+        order=order,
+        seed=seed,
+        max_chunks=max_chunks,
     )
 
 
@@ -402,6 +620,11 @@ def run_puzzle(
     workers: int = 1,
     resume: bool = False,
     progress: bool = True,
+    coverage: bool = False,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    order: str = "sequential",
+    seed: int | None = None,
+    max_chunks: int | None = None,
 ) -> SearchOutcome:
     choice = (engine or puzzle.engine_default).lower()
     if choice in {"sequential", "seq"}:
@@ -410,6 +633,11 @@ def run_puzzle(
             workers=workers,
             resume=resume,
             progress=progress,
+            coverage=coverage,
+            chunk_size=chunk_size,
+            order=order,
+            seed=seed,
+            max_chunks=max_chunks,
         )
     if choice in {"window", "practice-window"}:
         return run_window(
@@ -418,6 +646,11 @@ def run_puzzle(
             workers=workers,
             resume=resume,
             progress=progress,
+            coverage=coverage,
+            chunk_size=chunk_size,
+            order=order,
+            seed=seed,
+            max_chunks=max_chunks,
         )
     if choice in {"inject", "inject-known", "known"}:
         return run_inject_known(puzzle)

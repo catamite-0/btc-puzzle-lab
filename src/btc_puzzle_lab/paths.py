@@ -15,3 +15,7 @@ ENV_EXAMPLE_FILE = CONFIG_DIR / ".env.example"
 
 def scan_checkpoint_path(puzzle_id: int) -> Path:
     return STATE_DIR / f"scan_{puzzle_id}.json"
+
+
+def coverage_path(puzzle_id: int) -> Path:
+    return STATE_DIR / f"coverage_{puzzle_id}.json"

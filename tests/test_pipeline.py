@@ -111,3 +111,5 @@ def test_summary_includes_events(tmp_path: Path, monkeypatch):
     assert summary.unique_hits >= 1
     assert "catalog puzzles" in text
     assert summary.hit_rows == 1
+    assert summary.coverage_files == 0
+    assert "coverage files" in text

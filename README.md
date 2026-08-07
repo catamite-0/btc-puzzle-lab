@@ -90,9 +90,26 @@ Private keys are written only under ignored `state/HITS.jsonl` (`0600`). CLI doe
 |---|---|
 | `--workers N` | Process workers for sequential/window scans |
 | `--resume` | Resume from `state/scan_<id>.json` checkpoint |
+| `--coverage` | Scan via persistent chunk ledger (skips done ranges) |
+| `--chunk-size N` | Coverage chunk size in keys (default: 65536) |
+| `--order sequential\|random` | Chunk pick order for coverage mode |
+| `--seed N` | RNG seed for `--order random` |
+| `--max-chunks N` | Stop after N pending/in-progress chunks this run |
 | `--no-progress` | Disable keys/s progress lines |
 
-Checkpoints and structured events never store private keys.
+```bash
+# chunked sequential coverage (mergeable across runs)
+python -m btc_puzzle_lab run 16 --coverage --chunk-size 4096 --max-chunks 2
+
+# reproducible random chunk order
+python -m btc_puzzle_lab run 16 --coverage --order random --seed 42 --max-chunks 4
+
+# inspect local coverage ledger(s)
+python -m btc_puzzle_lab coverage
+python -m btc_puzzle_lab coverage 16
+```
+
+Checkpoints, coverage ledgers, and structured events never store private keys.
 
 ## Auto-transfer safety gates
 
@@ -143,6 +160,7 @@ python -m pytest
 | `state/HITS.jsonl` | Hits (gitignored, mode `0600`) |
 | `state/runs.jsonl` | Structured run events, no secrets (gitignored) |
 | `state/scan_<id>.json` | Search resume checkpoints (gitignored) |
+| `state/coverage_<id>.json` | Range coverage ledger / chunk status (gitignored) |
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
 | `config/.env` | Local transfer config (gitignored) |
 | `data/puzzles.json` | Practice catalog |
