@@ -1,11 +1,11 @@
 # BTC Puzzle Lab
 
-Practice lab for **already-solved** [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) entries.
+Practice lab for [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) workflows.
 
 Goal of v0.1: run a small end-to-end pipeline on this host (2 CPU / 2 GiB):
 
 ```text
-catalog → search engine → state/HITS.jsonl → local audit
+catalog → search engine → state/HITS.jsonl → local audit → optional sweep transfer
 ```
 
 This is an educational workflow lab. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody.
@@ -24,6 +24,7 @@ python3 -m venv .venv-dev
 source .venv-dev/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install -e .
+cp config/.env.example config/.env   # only needed for auto-transfer
 ```
 
 ## Commands
@@ -49,9 +50,31 @@ python -m btc_puzzle_lab audit
 
 # optional on-chain balance check (mempool.space)
 python -m btc_puzzle_lab audit --balance
+
+# after configuring config/.env, sweep latest hit (default dry-run)
+python -m btc_puzzle_lab transfer
+
+# or transfer immediately after a hit
+python -m btc_puzzle_lab run 20 --transfer
 ```
 
 Private keys are written only under ignored `state/HITS.jsonl` (`0600`). CLI does not print them unless you pass `--show-key`.
+
+## Auto-transfer safety gates
+
+Configured via `config/.env` (see `config/.env.example`):
+
+| Gate | Default | Meaning |
+|---|---|---|
+| `AUTO_TRANSFER_ENABLED` | `false` | Master switch |
+| `AUTO_TRANSFER_DRY_RUN` | `true` | Sign + write local `.txhex`, do **not** broadcast |
+| `AUTO_TRANSFER_DEST_ADDR` | empty | Destination must be a valid BTC address |
+| `AUTO_TRANSFER_LIVE_CONFIRM` | empty | Live broadcast requires exact phrase `I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC` |
+| fee / dust caps | set | Fee rate is capped; dust / min-balance skips apply |
+
+Dry-run artifacts land in ignored `state/dryrun_*.txhex` (`0600`). Signed hex is never printed to stdout. Address↔key mismatch aborts hard.
+
+Supports sweeping compressed/uncompressed Legacy P2PKH and compressed Native Segwit P2WPKH.
 
 ### Optional Keyhunt
 
@@ -71,16 +94,18 @@ python -m pytest
 
 ## Scope boundaries
 
-- Independent from `coinsense` whale-hunting / auto-transfer.
-- No Discord, no Gemini, no automatic broadcasting.
-- Unsolved high-bit puzzles are out of scope for this host class.
-- Solved-puzzle balances are usually already spent; audit balance checks are for pipeline practice only.
+- Independent from `coinsense` (no Discord / Gemini; own transfer module).
+- Live broadcast is opt-in only behind explicit confirm.
+- Unsolved high-bit puzzles remain unrealistic on this host class.
+- Solved-puzzle balances are usually already spent; transfer dry-runs still exercise the pipeline.
 
 ## Local state
 
 | Path | Purpose |
 |---|---|
-| `state/HITS.jsonl` | Practice hits (gitignored, mode `0600`) |
+| `state/HITS.jsonl` | Hits (gitignored, mode `0600`) |
+| `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
+| `config/.env` | Local transfer config (gitignored) |
 | `data/puzzles.json` | Practice catalog |
 
 ## License

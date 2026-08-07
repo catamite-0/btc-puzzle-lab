@@ -10,6 +10,21 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.hits import read_hits
 from btc_puzzle_lab.paths import HITS_FILE
 from btc_puzzle_lab.search import run_puzzle
+from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+from btc_puzzle_lab.transfer import TransferResult, sweep_hit
+
+
+def _print_transfer(result: TransferResult) -> None:
+    print(f"transfer[{result.status}]: {result.message}")
+    if result.send_amount is not None:
+        print(f"  send_amount={result.send_amount} sats fee={result.fee} "
+              f"fee_rate={result.fee_rate}")
+    if result.tx_fingerprint:
+        print(f"  tx_fingerprint={result.tx_fingerprint}")
+    if result.dry_run_path:
+        print(f"  dry_run_path={result.dry_run_path}")
+    if result.txid:
+        print(f"  txid={result.txid}")
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -51,9 +66,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
     print(f"hit puzzle #{outcome.hit.puzzle_id} address={outcome.hit.address}")
     print(f"recorded in {HITS_FILE}")
-    # Intentionally do not print private keys to stdout by default.
     if args.show_key:
         print(f"private_key_hex={outcome.hit.private_key_hex}")
+    if args.transfer:
+        _print_transfer(sweep_hit(outcome.hit))
     return 0
 
 
@@ -82,10 +98,35 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_transfer(args: argparse.Namespace) -> int:
+    settings = get_transfer_settings()
+    errors = validate_transfer_settings(settings)
+    if errors:
+        for err in errors:
+            print(f"config error: {err}", file=sys.stderr)
+        return 2
+    hits = read_hits()
+    if not hits:
+        print(f"no hits in {HITS_FILE}")
+        return 1
+    if args.puzzle is not None:
+        selected = [h for h in hits if h.puzzle_id == args.puzzle]
+        if not selected:
+            print(f"no hits for puzzle #{args.puzzle}")
+            return 1
+        hit = selected[-1]
+    else:
+        hit = hits[-1]
+    print(f"sweeping puzzle #{hit.puzzle_id} address={hit.address}")
+    result = sweep_hit(hit, settings=settings)
+    _print_transfer(result)
+    return 0 if result.status in {"dry_run", "broadcast", "skipped"} else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
-        description="Practice lab for solved Bitcoin Puzzle Transaction entries",
+        description="Practice lab for Bitcoin Puzzle Transaction workflows",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print private key hex on hit (off by default)",
     )
+    p_run.add_argument(
+        "--transfer",
+        action="store_true",
+        help="after a hit, attempt sweep transfer (respects AUTO_TRANSFER_* gates)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_audit = sub.add_parser("audit", help="verify recorded HITS locally")
@@ -126,6 +172,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="also query mempool.space for address balance",
     )
     p_audit.set_defaults(func=cmd_audit)
+
+    p_transfer = sub.add_parser(
+        "transfer",
+        help="sweep a recorded hit (default dry-run; requires AUTO_TRANSFER_*)",
+    )
+    p_transfer.add_argument(
+        "--puzzle",
+        type=int,
+        default=None,
+        help="puzzle id to sweep (default: latest hit)",
+    )
+    p_transfer.set_defaults(func=cmd_transfer)
 
     return parser
 
