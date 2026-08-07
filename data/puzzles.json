@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "description": "Practice catalog for already-solved Bitcoin Puzzle Transaction entries. Solutions are public knowledge for solved puzzles and exist only to exercise the lab pipeline.",
+  "source": "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx",
+  "puzzles": [
+    {
+      "id": 20,
+      "bits": 20,
+      "address": "1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum",
+      "range_start_hex": "80000",
+      "range_end_hex": "fffff",
+      "pubkey_compressed_hex": "033c4a45cbd643ff97d77f41ea37e843648d50fd894b864b0d52febc62f6454f7c",
+      "practice_solution_hex": "d2c55",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 40,
+      "bits": 40,
+      "address": "1EeAxcprB2PpCnr34VfZdFrkUWuxyiNEFv",
+      "range_start_hex": "8000000000",
+      "range_end_hex": "ffffffffff",
+      "pubkey_compressed_hex": "03a2efa402fd5268400c77c20e574ba86409ededee7c4020e4b9f0edbee53de0d4",
+      "practice_solution_hex": "e9ae4933d6",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    }
+  ]
+}

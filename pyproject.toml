@@ -1,0 +1,33 @@
+[project]
+name = "btc-puzzle-lab"
+version = "0.1.0"
+description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → local audit"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "base58==2.1.1",
+    "cryptography==46.0.5",
+    "requests==2.32.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10.0",
+    "ruff>=0.9,<1",
+]
+
+[project.scripts]
+btc-puzzle-lab = "btc_puzzle_lab.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E9", "F", "I"]
