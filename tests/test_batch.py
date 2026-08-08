@@ -48,7 +48,7 @@ def test_build_plan_blocks_missing_external_binary(tmp_path, monkeypatch):
     assert len(plan.jobs) == 1
     assert plan.jobs[0].engine == "keyhunt"
     assert plan.jobs[0].job_status == "blocked"
-    assert "KEYHUNT_PATH" in (plan.jobs[0].blocker or "")
+    assert "engines install" in (plan.jobs[0].blocker or "")
 
 
 def test_run_batch_limit_and_hit(tmp_path, monkeypatch):

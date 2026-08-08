@@ -49,6 +49,9 @@ class TransferSettings:
 
 def load_dotenv_files() -> None:
     # Optional local config; never required for search/audit-only use.
+    engines_env = REPO_ROOT / "config" / "engines.env"
+    if engines_env.is_file():
+        load_dotenv(engines_env, override=False)
     if ENV_FILE.is_file():
         load_dotenv(ENV_FILE, override=False)
     root_env = REPO_ROOT / ".env"
