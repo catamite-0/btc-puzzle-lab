@@ -248,9 +248,6 @@ btc-puzzle-lab run 40 --engine bitcrack
 2. else address search: `bitcrack` → `keyhunt`
 3. else local `window` / `sequential` / coverage
 
-Compute reality check: installing solvers makes the **orchestration production-ready**;
-it does not make unsolved high-bit puzzles cheap on a 2 CPU / 2 GiB host.
-
 ## Exit codes
 
 | Code | Meaning |
@@ -273,7 +270,6 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 
 - Standalone lab (no Discord / Gemini; own transfer module).
 - Live broadcast is opt-in only behind explicit confirm.
-- Unsolved high-bit puzzles remain unrealistic on a 2 CPU / 2 GiB host.
 - Solved-puzzle balances are usually already spent; transfer dry-runs still exercise the pipeline.
 
 ## Local state

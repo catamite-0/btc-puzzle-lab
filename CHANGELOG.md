@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Drop host-class / compute-capacity lectures from agent notes and docs
+  (operator ignores compute limits; focus on algorithms and toolchain)
+
 ## [0.4.0] — 2026-08-08
 
 Production pivot: first-class solver toolchain. Operators install upstream CPU
