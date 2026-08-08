@@ -23,6 +23,7 @@ _ENGINE_CHOICES = [
     "window",
     "inject-known",
     "keyhunt",
+    "bitcrack",
     "kangaroo",
     "rckangaroo",
 ]

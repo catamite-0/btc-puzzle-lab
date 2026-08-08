@@ -30,16 +30,23 @@ def test_high_bits_prefer_window_without_external():
     assert plan.coverage is True
 
 
-def test_high_bits_prefer_keyhunt_when_present():
+def test_high_bits_prefer_bitcrack_before_keyhunt():
+    plan = plan_strategy(
+        get_puzzle(40), host=_host(engines={"keyhunt", "bitcrack"}, cpus=4)
+    )
+    assert plan.engine == "bitcrack"
+
+
+def test_high_bits_prefer_keyhunt_when_no_bitcrack():
     plan = plan_strategy(get_puzzle(40), host=_host(engines={"keyhunt"}, cpus=4))
     assert plan.engine == "keyhunt"
     assert plan.threads == 4
 
 
-def test_pubkey_prefers_rckangaroo_over_kangaroo_and_keyhunt():
+def test_pubkey_prefers_rckangaroo_over_bitcrack():
     plan = plan_strategy(
         get_puzzle(40),
-        host=_host(engines={"keyhunt", "kangaroo", "rckangaroo"}, cpus=4),
+        host=_host(engines={"bitcrack", "keyhunt", "kangaroo", "rckangaroo"}, cpus=4),
     )
     assert plan.engine == "rckangaroo"
     assert plan.dp == 16

@@ -46,8 +46,6 @@ def test_run_external_parses_hit(tmp_path: Path, monkeypatch):
 def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):
     puzzle = get_puzzle(40)
     fake = tmp_path / "RCKangaroo"
-    # Echo a miss so we only assert command construction side via cmdline on miss? 
-    # On miss cmdline is still returned.
     fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
     fake.chmod(0o755)
     monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
@@ -58,3 +56,17 @@ def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):
     assert puzzle.pubkey_compressed_hex in result.cmdline
     assert "-start" in result.cmdline
     assert f"{puzzle.range_start:x}" in result.cmdline
+
+
+def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):
+    puzzle = get_puzzle(40)
+    fake = tmp_path / "cuBitCrack"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("BITCRACK_PATH", str(fake))
+    result = run_external_engine(puzzle, "bitcrack")
+    assert result.secret is None
+    assert "--keyspace" in result.cmdline
+    assert f"{puzzle.range_start:x}:{puzzle.range_end:x}" in result.cmdline
+    assert puzzle.address in result.cmdline
+    assert "-c" in result.cmdline

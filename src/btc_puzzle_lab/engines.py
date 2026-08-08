@@ -38,6 +38,17 @@ ENGINES: dict[str, EngineBinary] = {
         ),
         needs_pubkey=False,
     ),
+    "bitcrack": EngineBinary(
+        name="bitcrack",
+        env_var="BITCRACK_PATH",
+        candidates=(
+            "/home/dev/projects/coinsense/bin/cuBitCrack",
+            "bin/cuBitCrack",
+            "bin/clBitCrack",
+            "bin/BitCrack",
+        ),
+        needs_pubkey=False,
+    ),
     "kangaroo": EngineBinary(
         name="kangaroo",
         env_var="KANGAROO_PATH",
@@ -108,7 +119,7 @@ def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str]:
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
     output = (proc.stdout or "") + "\n" + (proc.stderr or "")
     # Some solvers also write RESULTS.TXT / similar beside cwd.
-    for name in ("RESULTS.TXT", "Result.txt", "KEYFOUND.key", "Found.txt"):
+    for name in ("RESULTS.TXT", "Result.txt", "KEYFOUND.key", "Found.txt", "found.txt"):
         path = cwd / name
         if path.is_file():
             output += "\n" + path.read_text(encoding="utf-8", errors="ignore")
@@ -166,6 +177,22 @@ def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str]
     return cmd, tmp
 
 
+def _cmd_bitcrack(binary: Path, puzzle: Puzzle) -> tuple[list[str], Path]:
+    tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-bc-"))
+    out = tmp / "found.txt"
+    keyspace = f"{puzzle.range_start:x}:{puzzle.range_end:x}"
+    cmd = [
+        str(binary),
+        "-c",
+        "--keyspace",
+        keyspace,
+        "-o",
+        str(out),
+        puzzle.address,
+    ]
+    return cmd, tmp
+
+
 def run_external_engine(
     puzzle: Puzzle,
     engine: str,
@@ -194,6 +221,7 @@ def run_external_engine(
 
     builders = {
         "keyhunt": lambda: _cmd_keyhunt(binary, puzzle, threads=threads),
+        "bitcrack": lambda: _cmd_bitcrack(binary, puzzle),
         "kangaroo": lambda: _cmd_kangaroo(binary, puzzle, threads=threads),
         "rckangaroo": lambda: _cmd_rckangaroo(binary, puzzle, dp=dp),
     }

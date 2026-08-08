@@ -127,6 +127,13 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             reason=f"{puzzle.bits}-bit range; single-pass sequential",
         )
 
+    # Address-only GPU brute force before CPU keyhunt.
+    if "bitcrack" in installed and puzzle.bits > SEQUENTIAL_BITS:
+        return StrategyPlan(
+            engine="bitcrack",
+            reason=f"BitCrack available for {puzzle.bits}-bit address brute-force",
+        )
+
     if "keyhunt" in installed:
         return StrategyPlan(
             engine="keyhunt",
@@ -135,9 +142,12 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
         )
 
     if puzzle.practice_solution is not None:
-        hint = ""
+        hints: list[str] = []
         if _has_pubkey(puzzle) and not installed.intersection({"rckangaroo", "kangaroo"}):
-            hint = " (install RCKangaroo/Kangaroo for pubkey path)"
+            hints.append("install RCKangaroo/Kangaroo for pubkey path")
+        if "bitcrack" not in installed and puzzle.bits > SEQUENTIAL_BITS:
+            hints.append("install BitCrack for GPU address search")
+        hint = f" ({'; '.join(hints)})" if hints else ""
         return StrategyPlan(
             engine="window",
             workers=workers,
@@ -160,7 +170,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
 def describe_binaries() -> str:
     """Compatibility helper for tests/docs."""
     rows = []
-    for name in ("keyhunt", "kangaroo", "rckangaroo"):
+    for name in ("keyhunt", "bitcrack", "kangaroo", "rckangaroo"):
         path = resolve_binary(name)
         rows.append(f"{name}={'yes' if path else 'no'}")
     return " ".join(rows)

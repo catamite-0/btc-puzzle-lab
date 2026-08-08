@@ -147,19 +147,26 @@ Lab does not vendor GPU/CPU solvers; it adapts installed binaries:
 | Engine | Env | Needs | Role |
 |---|---|---|---|
 | `keyhunt` | `KEYHUNT_PATH` | address | CPU address / range search |
+| `bitcrack` | `BITCRACK_PATH` | address | GPU address brute-force (`cuBitCrack`/`clBitCrack`) |
 | `kangaroo` | `KANGAROO_PATH` | compressed pubkey | classic Pollard kangaroo |
 | `rckangaroo` | `RCKANGAROO_PATH` | compressed pubkey | faster kangaroo (preferred when present) |
 
 ```bash
 export KEYHUNT_PATH=/path/to/keyhunt
+export BITCRACK_PATH=/path/to/cuBitCrack
 export KANGAROO_PATH=/path/to/Kangaroo
 export RCKANGAROO_PATH=/path/to/RCKangaroo
 python -m btc_puzzle_lab engines
-python -m btc_puzzle_lab run 40 --auto          # picks rckangaroo/kangaroo/keyhunt when suitable
+python -m btc_puzzle_lab run 40 --auto
+python -m btc_puzzle_lab run 40 --engine bitcrack
 python -m btc_puzzle_lab run 40 --engine rckangaroo --dp 16
 ```
 
-`--auto` preference for large pubkey puzzles: `rckangaroo` → `kangaroo` → `keyhunt` → local window/coverage.
+`--auto` preference:
+
+1. pubkey + large bits: `rckangaroo` → `kangaroo`
+2. else address search: `bitcrack` → `keyhunt`
+3. else local `window` / `sequential` / coverage
 
 ## Validate
 
