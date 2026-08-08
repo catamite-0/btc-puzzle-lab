@@ -8,7 +8,7 @@ catalog → search engine → state/HITS.jsonl → local audit → optional swee
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-**Stable release:** `v0.3.0`
+**Release:** `v0.4.0` — first-class solver toolchain (`engines install`)
 
 ## Quick start
 
@@ -17,6 +17,12 @@ python3 -m venv .venv-dev
 source .venv-dev/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install -e .
+
+# production solver path: build upstream keyhunt + kangaroo into ./bin/
+# (needs: git build-essential libssl-dev libgmp-dev)
+btc-puzzle-lab engines install
+btc-puzzle-lab engines
+
 btc-puzzle-lab list
 btc-puzzle-lab verify 1
 btc-puzzle-lab run 1
@@ -27,7 +33,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.3.0"
+python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.4.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
@@ -203,26 +209,37 @@ Dry-run artifacts land in ignored `state/dryrun_*.txhex` (`0600`). Signed hex is
 
 Supports sweeping compressed/uncompressed Legacy P2PKH and compressed Native Segwit P2WPKH, including multi-UTXO consolidate sweeps.
 
-### External solvers
+### External solvers (production toolchain)
 
-Lab does not vendor GPU/CPU solvers; it adapts installed binaries:
-
-| Engine | Env | Needs | Role |
-|---|---|---|---|
-| `keyhunt` | `KEYHUNT_PATH` | address | CPU address / range search |
-| `bitcrack` | `BITCRACK_PATH` | address | GPU address brute-force (`cuBitCrack`/`clBitCrack`) |
-| `kangaroo` | `KANGAROO_PATH` | compressed pubkey | classic Pollard kangaroo |
-| `rckangaroo` | `RCKANGAROO_PATH` | compressed pubkey | faster kangaroo (preferred when present) |
+Operators should not hand-wire someone else's binary path for the default CPU
+solvers. Install them into the workspace:
 
 ```bash
-export KEYHUNT_PATH=/path/to/keyhunt
-export BITCRACK_PATH=/path/to/cuBitCrack
-export KANGAROO_PATH=/path/to/Kangaroo
-export RCKANGAROO_PATH=/path/to/RCKangaroo
+# Debian/Ubuntu deps once:
+sudo apt install -y git build-essential libssl-dev libgmp-dev
+
+btc-puzzle-lab engines install              # keyhunt + kangaroo → bin/ + config/engines.env
+btc-puzzle-lab engines install --only keyhunt
+btc-puzzle-lab engines                      # status
+```
+
+| Engine | Install | Needs | Role |
+|---|---|---|---|
+| `keyhunt` | `engines install` (albertobsd/keyhunt) | address | CPU address / range search |
+| `kangaroo` | `engines install` (JeanLucPons/Kangaroo, CPU) | compressed pubkey | Pollard kangaroo |
+| `bitcrack` | manual (CUDA/OpenCL) | address | GPU address brute-force |
+| `rckangaroo` | manual | compressed pubkey | faster kangaroo when present |
+
+Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
+`config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
+
+```bash
 btc-puzzle-lab engines
 btc-puzzle-lab run 40 --auto
+btc-puzzle-lab run 40 --engine keyhunt
+# GPU (manual binary):
+export BITCRACK_PATH=/path/to/cuBitCrack
 btc-puzzle-lab run 40 --engine bitcrack
-btc-puzzle-lab run 40 --engine rckangaroo --dp 16
 ```
 
 `--auto` preference:
@@ -230,6 +247,9 @@ btc-puzzle-lab run 40 --engine rckangaroo --dp 16
 1. pubkey + large bits: `rckangaroo` → `kangaroo`
 2. else address search: `bitcrack` → `keyhunt`
 3. else local `window` / `sequential` / coverage
+
+Compute reality check: installing solvers makes the **orchestration production-ready**;
+it does not make unsolved high-bit puzzles cheap on a 2 CPU / 2 GiB host.
 
 ## Exit codes
 
@@ -269,6 +289,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `config/.env` | Local transfer config (gitignored) |
 | `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
 | `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
+| `vendor/` | Cloned upstream solver sources (`engines install`, gitignored) |
+| `bin/` | Built solver binaries (`engines install`, gitignored) |
+| `config/engines.env` | Auto-written solver paths (gitignored) |
 
 ## License
 

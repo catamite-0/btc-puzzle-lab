@@ -131,10 +131,13 @@ def _classify_job(plan: StrategyPlan, puzzle: Puzzle) -> tuple[JobStatus, str | 
         return "ready", None
     if plan.engine in EXTERNAL_ENGINES:
         if resolve_binary(plan.engine) is None:
+            if plan.engine in {"keyhunt", "kangaroo"}:
+                return (
+                    "blocked",
+                    f"{plan.engine} binary not found; run: btc-puzzle-lab engines install",
+                )
             env = {
-                "keyhunt": "KEYHUNT_PATH",
                 "bitcrack": "BITCRACK_PATH",
-                "kangaroo": "KANGAROO_PATH",
                 "rckangaroo": "RCKANGAROO_PATH",
             }[plan.engine]
             return "blocked", f"{plan.engine} binary not found; set {env}"

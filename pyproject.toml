@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "btc-puzzle-lab"
-version = "0.3.0"
+version = "0.4.0"
 description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → audit → optional sweep"
 readme = "README.md"
 license = { file = "LICENSE" }

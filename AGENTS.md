@@ -13,10 +13,14 @@
 - Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
   bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
   `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
-- Automation: `host` / `adapt` → `plan` → `batch` → `status`.
+- Automation: `host` / `adapt` → `engines install` → `plan` → `batch` → `status`.
+- Solver toolchain: `btc-puzzle-lab engines install` builds upstream keyhunt +
+  kangaroo into ignored `vendor/` + `bin/` and writes `config/engines.env`.
+  Never commit those build outputs. BitCrack/RCKangaroo remain manual (CUDA).
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
 - Ship: merge to `main`, bump versions (`pyproject.toml` + `__version__` + CHANGELOG),
-  then tag `v0.3.0` to trigger `.github/workflows/release.yml`.
+  then tag `v0.4.0` (or next) to trigger `.github/workflows/release.yml`.
 - Cloud Agent bootstrap: `.cursor/environment.json` + `scripts/cloud-install.sh`
-  (idempotent venv/deps). Do not bake `config/.env` or `state/` into builds.
+  (idempotent venv/deps). Do not bake `config/.env`, `state/`, `vendor/`, or `bin/`
+  into builds.

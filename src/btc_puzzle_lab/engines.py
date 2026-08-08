@@ -1,7 +1,10 @@
-"""Thin adapters for external search binaries.
+"""Adapters for external search binaries.
 
 Lab builds argv, runs the process, parses a private key int, and returns.
-Binaries stay outside the repo; configure via env paths.
+
+Production path: ``btc-puzzle-lab engines install`` clones/builds upstream
+solvers into workspace ``bin/`` and writes ``config/engines.env``.
+Manual ``*_PATH`` env vars still win when set.
 """
 
 from __future__ import annotations
@@ -13,8 +16,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from btc_puzzle_lab.catalog import Puzzle
 from btc_puzzle_lab.crypto import normalize_privkey_hex
+from btc_puzzle_lab.paths import workspace_root
 
 _HEX_KEY = re.compile(r"\b(0x)?([0-9a-fA-F]{1,64})\b")
 
@@ -76,16 +82,29 @@ class ExternalEngineResult:
     cmdline: tuple[str, ...] = ()
 
 
+def load_engine_env() -> None:
+    """Load workspace config/engines.env without overriding exported vars."""
+    env_path = workspace_root() / "config" / "engines.env"
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
+
+
 def resolve_binary(name: str) -> Path | None:
+    load_engine_env()
     spec = ENGINES[name]
     env = os.environ.get(spec.env_var)
     paths: list[Path] = []
     if env:
         paths.append(Path(env).expanduser())
-    paths.extend(Path(p).expanduser() for p in spec.candidates)
+    # Workspace-managed toolchain only (respects BTC_PUZZLE_LAB_HOME).
+    # Do not fall back to process-cwd bin/ — that leaks host checkouts into tests
+    # and alternate homes.
+    for candidate in spec.candidates:
+        paths.append(workspace_root() / "bin" / Path(candidate).name)
     for path in paths:
-        if path.is_file() and os.access(path, os.X_OK):
-            return path
+        resolved = path.resolve() if path.exists() else path
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return resolved
     return None
 
 
@@ -210,7 +229,8 @@ def run_external_engine(
         return ExternalEngineResult(
             engine,
             None,
-            f"{engine} not found; set {spec.env_var} or place binary under bin/",
+            f"{engine} not found; run: btc-puzzle-lab engines install "
+            f"(or set {spec.env_var} / place binary under bin/)",
         )
 
     builders = {
@@ -246,10 +266,20 @@ def run_external_engine(
 
 
 def format_engine_status() -> str:
-    lines = ["engine        available  path"]
+    lines = [
+        "engine        available  path",
+        f"toolchain bin: {workspace_root() / 'bin'}",
+        f"engines.env  : {workspace_root() / 'config' / 'engines.env'}",
+        "",
+    ]
     for name, spec in ENGINES.items():
         path = resolve_binary(name)
         mark = "yes" if path else "no"
-        shown = str(path) if path else f"(set {spec.env_var})"
+        if path:
+            shown = str(path)
+        elif name in {"keyhunt", "kangaroo"}:
+            shown = f"(run: btc-puzzle-lab engines install --only {name})"
+        else:
+            shown = f"(manual: set {spec.env_var})"
         lines.append(f"{name:<12}  {mark:<9}  {shown}")
     return "\n".join(lines)

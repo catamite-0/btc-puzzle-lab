@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 state/
+vendor/
+bin/
 HITS.jsonl
 *.txhex
 *.log
@@ -15,4 +17,5 @@ build/
 *.egg-info/
 .env
 config/.env
+config/engines.env
 *.egg

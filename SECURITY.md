@@ -36,6 +36,10 @@ Hit and dry-run files are written with mode `0600` when created by this tool.
 Host overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`) affect strategy knobs
 only; they are not credentials.
 
+`engines install` clones third-party solver source into ignored `vendor/` and
+copies binaries into ignored `bin/`. Those upstream licenses apply; treat build
+outputs as local toolchains, not secrets — but do not commit them.
+
 ## Reporting
 
 If you find a way this tool prints private keys or signed transaction hex without

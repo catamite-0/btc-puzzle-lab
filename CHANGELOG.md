@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-08
+
+Production pivot: first-class solver toolchain. Operators install upstream CPU
+solvers through the lab instead of wiring someone else's `KEYHUNT_PATH` by hand.
+
+### Added
+- `btc-puzzle-lab engines install` clones/builds upstream `keyhunt` + `kangaroo`
+  into workspace `bin/` and writes `config/engines.env` (auto-loaded)
+- Modern-g++ patch for JeanLucPons/Kangaroo `Timer.h` (`cstdint`)
+- Docs for Debian build deps (`git build-essential libssl-dev libgmp-dev`)
+
+### Changed
+- `engines` CLI gains `status` / `install` subcommands; default remains status
+- Binary resolve uses env + workspace `bin/` only (respects `BTC_PUZZLE_LAB_HOME`)
+- `adapt` / batch blockers point at `engines install`
+- BitCrack / RCKangaroo remain manual (CUDA / upstream packaging)
+
 ## [0.3.0] — 2026-08-08
 
 Stable cut of the post-0.2 automation surface: full catalog import, catalog-wide

@@ -31,6 +31,7 @@ from btc_puzzle_lab.strategy import (
     probe_host,
 )
 from btc_puzzle_lab.summary import build_summary, format_summary
+from btc_puzzle_lab.toolchain import format_install_results, install_engines
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
 
 _ENGINE_CHOICES = [
@@ -158,7 +159,28 @@ def cmd_strategy(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_engines(_: argparse.Namespace) -> int:
+def cmd_engines(args: argparse.Namespace) -> int:
+    action = getattr(args, "engines_action", "status") or "status"
+    if action == "install":
+        only = None
+        if args.only:
+            only = [part.strip() for part in args.only.split(",") if part.strip()]
+        try:
+            results = install_engines(only, force=args.force)
+        except (RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(format_install_results(results))
+        print()
+        print(format_engine_status())
+        # Fail if any requested installable engine failed (ignore manual-only notes
+        # unless they were the only selection).
+        hard_fail = [
+            r
+            for r in results
+            if not r.ok and r.name in {"keyhunt", "kangaroo"}
+        ]
+        return 1 if hard_fail else 0
     print(format_engine_status())
     return 0
 
@@ -486,8 +508,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_strategy.set_defaults(func=cmd_strategy)
 
-    p_engines = sub.add_parser("engines", help="list external solver binaries and paths")
-    p_engines.set_defaults(func=cmd_engines)
+    p_engines = sub.add_parser(
+        "engines",
+        help="list or install external solver toolchain (keyhunt/kangaroo)",
+    )
+    eng_sub = p_engines.add_subparsers(dest="engines_action")
+    p_eng_status = eng_sub.add_parser("status", help="show solver binary status (default)")
+    p_eng_status.set_defaults(func=cmd_engines, engines_action="status")
+    p_eng_install = eng_sub.add_parser(
+        "install",
+        help="clone+build upstream solvers into workspace bin/ (production path)",
+    )
+    p_eng_install.add_argument(
+        "--only",
+        default=None,
+        help="comma-separated engines: keyhunt,kangaroo (default: both)",
+    )
+    p_eng_install.add_argument(
+        "--force",
+        action="store_true",
+        help="rebuild even if bin/<engine> already exists",
+    )
+    p_eng_install.set_defaults(func=cmd_engines, engines_action="install")
+    p_engines.set_defaults(func=cmd_engines, engines_action="status")
 
     p_host = sub.add_parser("host", help="probe host profile (CPU/RAM/GPU/engines/tier)")
     p_host.set_defaults(func=cmd_host)

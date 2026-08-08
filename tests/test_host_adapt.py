@@ -65,7 +65,7 @@ def test_format_and_adapt_text():
     text = format_host_profile(profile)
     assert "tier           : standard" in text
     tips = adapt_recommendations(profile)
-    assert any("KEYHUNT_PATH" in tip or "external solvers" in tip for tip in tips)
+    assert any("engines install" in tip or "external solvers" in tip for tip in tips)
 
 
 def test_cli_host_and_adapt():

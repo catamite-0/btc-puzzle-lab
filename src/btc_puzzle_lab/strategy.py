@@ -431,8 +431,8 @@ def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
         tips.append("keep batch --limit small; prefer solved/practice ids for local engines")
     if not host.engines:
         tips.append(
-            "no external solvers detected — set KEYHUNT_PATH / BITCRACK_PATH / "
-            "KANGAROO_PATH / RCKANGAROO_PATH for unsolved high-bit work"
+            "no external solvers detected — run: btc-puzzle-lab engines install "
+            "(keyhunt + kangaroo), or set BITCRACK_PATH / RCKANGAROO_PATH for GPU"
         )
     if host.gpu and "bitcrack" not in host.engines:
         tips.append("GPU seen but BitCrack missing — set BITCRACK_PATH to enable GPU address search")
