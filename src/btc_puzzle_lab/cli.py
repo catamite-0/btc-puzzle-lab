@@ -2,23 +2,42 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from btc_puzzle_lab import __version__
-from btc_puzzle_lab.audit import audit_hits
+from btc_puzzle_lab.audit import audit_hits, export_audit_report
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
+from btc_puzzle_lab.coverage import format_coverage, load_coverage
 from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
-from btc_puzzle_lab.paths import HITS_FILE
-from btc_puzzle_lab.search import run_puzzle
+from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
+from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
-from btc_puzzle_lab.transfer import TransferResult, sweep_hit
+from btc_puzzle_lab.strategy import plan_strategy
+from btc_puzzle_lab.summary import build_summary, format_summary
+from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
+
+_ENGINE_CHOICES = [
+    "sequential",
+    "window",
+    "inject-known",
+    "keyhunt",
+    "bitcrack",
+    "kangaroo",
+    "rckangaroo",
+]
 
 
 def _print_transfer(result: TransferResult) -> None:
     print(f"transfer[{result.status}]: {result.message}")
     if result.send_amount is not None:
-        print(f"  send_amount={result.send_amount} sats fee={result.fee} "
-              f"fee_rate={result.fee_rate}")
+        print(
+            f"  send_amount={result.send_amount} sats fee={result.fee} "
+            f"fee_rate={result.fee_rate}"
+        )
+    if result.input_count is not None:
+        print(f"  inputs={result.input_count} rbf={result.rbf}")
     if result.tx_fingerprint:
         print(f"  tx_fingerprint={result.tx_fingerprint}")
     if result.dry_run_path:
@@ -55,14 +74,45 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     puzzle = get_puzzle(args.puzzle)
-    outcome = run_puzzle(
-        puzzle,
+    run_kwargs = dict(
         engine=args.engine,
         window=args.window,
         threads=args.threads,
+        workers=args.workers,
+        resume=args.resume,
+        progress=not args.no_progress,
+        coverage=args.coverage,
+        chunk_size=args.chunk_size,
+        order=args.order,
+        seed=args.seed,
+        max_chunks=args.max_chunks,
+        dp=args.dp,
     )
+    if args.auto:
+        plan = plan_strategy(puzzle)
+        print(f"auto: {plan.format()}")
+        run_kwargs.update(
+            engine=args.engine or plan.engine,
+            window=plan.window,
+            threads=plan.threads,
+            workers=plan.workers,
+            coverage=plan.coverage,
+            chunk_size=plan.chunk_size,
+            order=plan.order,
+            seed=args.seed if args.seed is not None else plan.seed,
+            max_chunks=args.max_chunks if args.max_chunks is not None else plan.max_chunks,
+            dp=args.dp if args.dp != 16 else plan.dp,
+        )
+    outcome = run_puzzle(puzzle, **run_kwargs)
     print(f"engine={outcome.engine}: {outcome.message}")
+    if outcome.coverage is not None:
+        print(format_coverage(outcome.coverage))
+        if outcome.chunks_scanned:
+            print(f"chunks_scanned={outcome.chunks_scanned}")
     if outcome.hit is None:
+        # Coverage exhaustion / partial miss is an informative non-hit, not a crash.
+        if outcome.coverage is not None and "coverage complete" in outcome.message:
+            return 0
         return 1
     print(f"hit puzzle #{outcome.hit.puzzle_id} address={outcome.hit.address}")
     print(f"recorded in {HITS_FILE}")
@@ -70,6 +120,43 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"private_key_hex={outcome.hit.private_key_hex}")
     if args.transfer:
         _print_transfer(sweep_hit(outcome.hit))
+    return 0
+
+
+def cmd_strategy(args: argparse.Namespace) -> int:
+    puzzle = get_puzzle(args.puzzle)
+    plan = plan_strategy(puzzle)
+    print(f"puzzle #{puzzle.id} bits={puzzle.bits}")
+    print(plan.format())
+    return 0
+
+
+def cmd_engines(_: argparse.Namespace) -> int:
+    print(format_engine_status())
+    return 0
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    if args.puzzle is not None:
+        ledger = load_coverage(args.puzzle)
+        if ledger is None:
+            print(f"no coverage ledger at {coverage_path(args.puzzle)}")
+            return 1
+        print(format_coverage(ledger))
+        return 0
+    found = sorted(STATE_DIR.glob("coverage_*.json")) if STATE_DIR.exists() else []
+    if not found:
+        print(f"no coverage ledgers in {STATE_DIR}")
+        return 1
+    for path in found:
+        try:
+            puzzle_id = int(path.stem.split("_", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        ledger = load_coverage(puzzle_id)
+        if ledger is not None:
+            print(format_coverage(ledger))
+            print()
     return 0
 
 
@@ -95,6 +182,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
         )
         if result.error:
             print(f"         error: {result.error}")
+    if args.export:
+        export_path = Path(args.export)
+        export_audit_report(results, export_path)
+        print(f"exported audit report to {export_path}")
     return 1 if failures else 0
 
 
@@ -120,7 +211,36 @@ def cmd_transfer(args: argparse.Namespace) -> int:
     print(f"sweeping puzzle #{hit.puzzle_id} address={hit.address}")
     result = sweep_hit(hit, settings=settings)
     _print_transfer(result)
+    if result.status == "dry_run" and result.dry_run_path and args.verify_dry_run:
+        verify = verify_dry_run_file(result.dry_run_path)
+        print(
+            f"dry-run verify: {'OK' if verify.ok else 'FAIL'} — {verify.message} "
+            f"(inputs={verify.input_count} outputs={verify.output_count} "
+            f"size={verify.size_bytes})"
+        )
+        if not verify.ok:
+            return 1
     return 0 if result.status in {"dry_run", "broadcast", "skipped"} else 1
+
+
+def cmd_verify_dry_run(args: argparse.Namespace) -> int:
+    result = verify_dry_run_file(args.path)
+    print(f"[{'OK' if result.ok else 'FAIL'}] {result.message}")
+    print(f"  path={result.path}")
+    if result.fingerprint:
+        print(f"  fingerprint={result.fingerprint}")
+    if result.version is not None:
+        print(
+            f"  version={result.version} inputs={result.input_count} "
+            f"outputs={result.output_count} size_bytes={result.size_bytes}"
+        )
+    return 0 if result.ok else 1
+
+
+def cmd_summary(args: argparse.Namespace) -> int:
+    summary = build_summary(recent=args.recent)
+    print(format_summary(summary))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,13 +258,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_verify.set_defaults(func=cmd_verify)
 
+    p_strategy = sub.add_parser("strategy", help="show auto strategy plan without searching")
+    p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
+    p_strategy.set_defaults(func=cmd_strategy)
+
+    p_engines = sub.add_parser("engines", help="list external solver binaries and paths")
+    p_engines.set_defaults(func=cmd_engines)
+
     p_run = sub.add_parser("run", help="search / practice-run a puzzle and append HITS")
     p_run.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_run.add_argument(
+        "--auto",
+        action="store_true",
+        help="pick engine/workers/coverage from host-aware strategy",
+    )
+    p_run.add_argument(
         "--engine",
-        choices=["sequential", "window", "inject-known", "keyhunt"],
+        choices=_ENGINE_CHOICES,
         default=None,
-        help="override catalog default engine",
+        help="override catalog default engine (also overrides --auto engine)",
     )
     p_run.add_argument(
         "--window",
@@ -152,7 +284,63 @@ def build_parser() -> argparse.ArgumentParser:
         default=1_000_000,
         help="keys in practice window for --engine window (default: 1000000)",
     )
-    p_run.add_argument("--threads", type=int, default=2, help="keyhunt threads")
+    p_run.add_argument(
+        "--threads",
+        type=int,
+        default=2,
+        help="threads for keyhunt/kangaroo (default: 2)",
+    )
+    p_run.add_argument(
+        "--dp",
+        type=int,
+        default=16,
+        help="RCKangaroo DP bits (default: 16)",
+    )
+    p_run.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="process workers for sequential/window scan (default: 1)",
+    )
+    p_run.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume from state/scan_<id>.json checkpoint if present",
+    )
+    p_run.add_argument(
+        "--coverage",
+        action="store_true",
+        help="scan via coverage ledger chunks (skips already-done ranges)",
+    )
+    p_run.add_argument(
+        "--chunk-size",
+        type=int,
+        default=DEFAULT_CHUNK_SIZE,
+        help=f"coverage chunk size in keys (default: {DEFAULT_CHUNK_SIZE})",
+    )
+    p_run.add_argument(
+        "--order",
+        choices=["sequential", "random"],
+        default="sequential",
+        help="coverage chunk order (default: sequential)",
+    )
+    p_run.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for --order random (reproducible plans)",
+    )
+    p_run.add_argument(
+        "--max-chunks",
+        type=int,
+        default=None,
+        help="scan at most N pending/in-progress chunks this run",
+    )
+    p_run.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable progress / keys-per-second output",
+    )
     p_run.add_argument(
         "--show-key",
         action="store_true",
@@ -165,11 +353,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.set_defaults(func=cmd_run)
 
+    p_cov = sub.add_parser("coverage", help="show range coverage ledger status")
+    p_cov.add_argument(
+        "puzzle",
+        type=int,
+        nargs="?",
+        default=None,
+        help="puzzle id (default: list all local coverage ledgers)",
+    )
+    p_cov.set_defaults(func=cmd_coverage)
+
     p_audit = sub.add_parser("audit", help="verify recorded HITS locally")
     p_audit.add_argument(
         "--balance",
         action="store_true",
         help="also query mempool.space for address balance",
+    )
+    p_audit.add_argument(
+        "--export",
+        type=str,
+        default=None,
+        help="write JSON audit report to this path (no private keys)",
     )
     p_audit.set_defaults(func=cmd_audit)
 
@@ -183,7 +387,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="puzzle id to sweep (default: latest hit)",
     )
+    p_transfer.add_argument(
+        "--verify-dry-run",
+        action="store_true",
+        help="after dry-run, structurally verify the written .txhex artifact",
+    )
     p_transfer.set_defaults(func=cmd_transfer)
+
+    p_vdr = sub.add_parser(
+        "verify-dry-run",
+        help="structurally verify a dry-run .txhex file (never prints hex)",
+    )
+    p_vdr.add_argument("path", type=str, help="path to dryrun_*.txhex")
+    p_vdr.set_defaults(func=cmd_verify_dry_run)
+
+    p_summary = sub.add_parser("summary", help="show local pipeline summary")
+    p_summary.add_argument(
+        "--recent",
+        type=int,
+        default=10,
+        help="number of recent run-log events to show (default: 10)",
+    )
+    p_summary.set_defaults(func=cmd_summary)
 
     return parser
 

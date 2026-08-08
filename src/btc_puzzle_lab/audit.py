@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import requests
 
-from btc_puzzle_lab.crypto import normalize_privkey_hex, privkey_bytes, privkey_to_p2pkh_address
+from btc_puzzle_lab.crypto import match_privkey_address, normalize_privkey_hex, privkey_bytes
 from btc_puzzle_lab.hits import Hit, read_hits
+from btc_puzzle_lab.runlog import log_event
 
 
 @dataclass(frozen=True)
@@ -15,19 +18,20 @@ class AuditResult:
     derived_address: str
     balance_sats: int | None
     error: str | None = None
+    addr_type: str | None = None
 
 
 def verify_hit(hit: Hit) -> AuditResult:
     try:
-        # Normalize/validate hex even though we only compare the derived address.
         normalize_privkey_hex(hit.private_key_hex)
         pk = privkey_bytes(hit.private_key_hex)
-        derived = privkey_to_p2pkh_address(pk)
+        addr_type, _compressed = match_privkey_address(pk, hit.address)
         return AuditResult(
             hit=hit,
-            address_ok=derived == hit.address,
-            derived_address=derived,
+            address_ok=True,
+            derived_address=hit.address,
             balance_sats=None,
+            addr_type=addr_type,
         )
     except Exception as exc:  # noqa: BLE001 - surface to CLI
         return AuditResult(
@@ -63,6 +67,7 @@ def audit_hits(*, check_balance: bool = False) -> list[AuditResult]:
                     address_ok=result.address_ok,
                     derived_address=result.derived_address,
                     balance_sats=balance,
+                    addr_type=result.addr_type,
                 )
             except Exception as exc:  # noqa: BLE001
                 result = AuditResult(
@@ -71,6 +76,49 @@ def audit_hits(*, check_balance: bool = False) -> list[AuditResult]:
                     derived_address=result.derived_address,
                     balance_sats=None,
                     error=f"balance lookup failed: {exc}",
+                    addr_type=result.addr_type,
                 )
         results.append(result)
+    failures = sum(1 for r in results if not r.address_ok or r.error)
+    log_event(
+        "audit_complete",
+        hits=len(results),
+        failures=failures,
+        check_balance=check_balance,
+    )
     return results
+
+
+def export_audit_report(results: list[AuditResult], path: Path) -> Path:
+    payload = {
+        "schema_version": 1,
+        "results": [
+            {
+                "puzzle_id": r.hit.puzzle_id,
+                "address": r.hit.address,
+                "engine": r.hit.engine,
+                "found_at": r.hit.found_at,
+                "address_ok": r.address_ok,
+                "derived_address": r.derived_address,
+                "balance_sats": r.balance_sats,
+                "addr_type": r.addr_type,
+                "error": r.error,
+                # deliberately omit private_key_hex
+            }
+            for r in results
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    log_event("audit_export", path=str(path), hits=len(results))
+    return path
+
+
+def audit_result_public_dict(result: AuditResult) -> dict:
+    row = asdict(result)
+    row.pop("hit", None)
+    row["puzzle_id"] = result.hit.puzzle_id
+    row["address"] = result.hit.address
+    row["engine"] = result.hit.engine
+    row["found_at"] = result.hit.found_at
+    return row
