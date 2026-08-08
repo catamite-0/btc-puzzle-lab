@@ -48,6 +48,10 @@ python -m btc_puzzle_lab verify 20
 # real sequential search for puzzle #20 → append HITS
 python -m btc_puzzle_lab run 20
 
+# host-aware auto strategy (engine/workers/coverage)
+python -m btc_puzzle_lab strategy 40
+python -m btc_puzzle_lab run 40 --auto
+
 # parallel workers + resume support
 python -m btc_puzzle_lab run 20 --workers 2 --resume
 

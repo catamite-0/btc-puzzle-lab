@@ -13,6 +13,7 @@ from btc_puzzle_lab.hits import read_hits
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+from btc_puzzle_lab.strategy import plan_strategy
 from btc_puzzle_lab.summary import build_summary, format_summary
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
 
@@ -62,8 +63,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     puzzle = get_puzzle(args.puzzle)
-    outcome = run_puzzle(
-        puzzle,
+    run_kwargs = dict(
         engine=args.engine,
         window=args.window,
         threads=args.threads,
@@ -76,6 +76,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         seed=args.seed,
         max_chunks=args.max_chunks,
     )
+    if args.auto:
+        plan = plan_strategy(puzzle)
+        print(f"auto: {plan.format()}")
+        run_kwargs.update(
+            engine=args.engine or plan.engine,
+            window=plan.window,
+            threads=plan.threads,
+            workers=plan.workers,
+            coverage=plan.coverage,
+            chunk_size=plan.chunk_size,
+            order=plan.order,
+            seed=args.seed if args.seed is not None else plan.seed,
+            max_chunks=args.max_chunks if args.max_chunks is not None else plan.max_chunks,
+        )
+    outcome = run_puzzle(puzzle, **run_kwargs)
     print(f"engine={outcome.engine}: {outcome.message}")
     if outcome.coverage is not None:
         print(format_coverage(outcome.coverage))
@@ -92,6 +107,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"private_key_hex={outcome.hit.private_key_hex}")
     if args.transfer:
         _print_transfer(sweep_hit(outcome.hit))
+    return 0
+
+
+def cmd_strategy(args: argparse.Namespace) -> int:
+    puzzle = get_puzzle(args.puzzle)
+    plan = plan_strategy(puzzle)
+    print(f"puzzle #{puzzle.id} bits={puzzle.bits}")
+    print(plan.format())
     return 0
 
 
@@ -217,13 +240,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_verify.set_defaults(func=cmd_verify)
 
+    p_strategy = sub.add_parser("strategy", help="show auto strategy plan without searching")
+    p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
+    p_strategy.set_defaults(func=cmd_strategy)
+
     p_run = sub.add_parser("run", help="search / practice-run a puzzle and append HITS")
     p_run.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
+    p_run.add_argument(
+        "--auto",
+        action="store_true",
+        help="pick engine/workers/coverage from host-aware strategy",
+    )
     p_run.add_argument(
         "--engine",
         choices=["sequential", "window", "inject-known", "keyhunt"],
         default=None,
-        help="override catalog default engine",
+        help="override catalog default engine (also overrides --auto engine)",
     )
     p_run.add_argument(
         "--window",
