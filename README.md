@@ -26,7 +26,7 @@ From a tagged release / wheel:
 
 ```bash
 python3 -m venv .venv
-source .venv/activate
+source .venv/bin/activate
 python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.3.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
