@@ -8,7 +8,37 @@ catalog → search engine → state/HITS.jsonl → local audit → optional swee
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-## Practice catalog
+## Catalog
+
+Default install ships a small **practice** catalog (solved puzzles for pipeline drills).
+
+Import the **full** Bitcoin Puzzle Transaction list (160 entries). Default uses the
+bundled CSV snapshot (`data/puzzle-tx-export.csv`); this overrides the small practice
+catalog via `<workspace>/data/puzzles.json`:
+
+```bash
+# bundled full export → data/puzzles.json
+btc-puzzle-lab import-catalog
+
+# optional live refresh (may fail behind Cloudflare from some networks)
+btc-puzzle-lab import-catalog --url \
+  'https://privatekeys.pw/puzzles/bitcoin-puzzle-tx/export?status=all'
+
+# or from a saved CSV
+btc-puzzle-lab import-catalog --from-csv /path/to/export.csv
+
+# omit publicly known solutions from the written JSON
+btc-puzzle-lab import-catalog --no-solutions
+
+btc-puzzle-lab list
+btc-puzzle-lab strategy 71
+btc-puzzle-lab run 71 --engine rckangaroo   # needs pubkey + external solver
+```
+
+Unsolved rows have `practice_solution_hex: null`; kangaroo-class engines need
+`pubkey_compressed_hex` when the export includes it.
+
+### Practice subset (shipped default)
 
 | ID | Bits | Default engine | Notes |
 |---:|-----:|---|---|

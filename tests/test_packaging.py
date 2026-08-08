@@ -1,5 +1,4 @@
 from importlib.resources import files
-from pathlib import Path
 
 from btc_puzzle_lab.catalog import load_puzzles
 from btc_puzzle_lab.engines import ENGINES
@@ -34,10 +33,12 @@ def test_no_coinsense_hardcoded_paths():
             assert "coinsense" not in candidate
 
 
-def test_repo_catalog_matches_packaged_copy():
-    root = Path(__file__).resolve().parents[1]
-    repo_copy = (root / "data" / "puzzles.json").read_text(encoding="utf-8")
+def test_packaged_catalog_is_practice_subset():
+    # Packaged default stays the small practice set; full catalogs are imported
+    # into workspace data/puzzles.json and intentionally may diverge.
     pkg_copy = files("btc_puzzle_lab").joinpath("data/puzzles.json").read_text(
         encoding="utf-8"
     )
-    assert repo_copy == pkg_copy
+    assert '"id": 20' in pkg_copy
+    ids = {p.id for p in load_puzzles()}
+    assert {1, 20, 40, 50}.issubset(ids)

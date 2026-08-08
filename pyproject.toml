@@ -46,7 +46,11 @@ btc-puzzle-lab = "btc_puzzle_lab.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-btc_puzzle_lab = ["data/puzzles.json", "data/env.example"]
+btc_puzzle_lab = [
+    "data/puzzles.json",
+    "data/env.example",
+    "data/puzzle-tx-export.csv",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

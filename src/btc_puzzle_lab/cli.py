@@ -7,6 +7,7 @@ from pathlib import Path
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.audit import audit_hits, export_audit_report
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
+from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL, import_catalog
 from btc_puzzle_lab.coverage import format_coverage, load_coverage
 from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.engines import format_engine_status
@@ -260,6 +261,28 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_catalog(args: argparse.Namespace) -> int:
+    csv_path = Path(args.from_csv) if args.from_csv else None
+    output = Path(args.output) if args.output else None
+    url = args.url
+    if csv_path is not None:
+        url = None
+    result = import_catalog(
+        url=url,
+        csv_path=csv_path,
+        output=output,
+        include_solutions=not args.no_solutions,
+    )
+    print(f"wrote {result.path}")
+    print(
+        f"puzzles={result.count} solved={result.solved} unsolved={result.unsolved} "
+        f"with_pubkey={result.with_pubkey} with_solution={result.with_solution}"
+    )
+    print(f"source={result.source}")
+    print("tip: run `btc-puzzle-lab list` to confirm the active catalog")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -268,8 +291,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_list = sub.add_parser("list", help="list practice puzzles")
+    p_list = sub.add_parser("list", help="list puzzles in the active catalog")
     p_list.set_defaults(func=cmd_list)
+
+    p_import = sub.add_parser(
+        "import-catalog",
+        help="import full ~160-puzzle catalog into data/puzzles.json",
+    )
+    p_import.add_argument(
+        "--url",
+        default=None,
+        help=(
+            "download CSV from URL instead of the bundled export "
+            f"(example: {DEFAULT_EXPORT_URL})"
+        ),
+    )
+    p_import.add_argument(
+        "--from-csv",
+        default=None,
+        help="read a local CSV export (overrides bundled / --url)",
+    )
+    p_import.add_argument(
+        "--output",
+        default=None,
+        help="output puzzles.json path (default: <workspace>/data/puzzles.json)",
+    )
+    p_import.add_argument(
+        "--no-solutions",
+        action="store_true",
+        help="omit practice_solution_hex even for publicly solved puzzles",
+    )
+    p_import.set_defaults(func=cmd_import_catalog)
 
     p_verify = sub.add_parser("verify", help="verify catalog solution derives the address")
     p_verify.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
@@ -445,3 +497,6 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
