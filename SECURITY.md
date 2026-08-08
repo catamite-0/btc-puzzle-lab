@@ -10,6 +10,10 @@ Transaction workflows. It is not a wallet, miner, or custody product.
 intentional for local exercises. They are not undiscovered keys and must not be
 treated as funds under management.
 
+`import-catalog` can write a full public export (including known solved keys) into
+workspace `data/puzzles.json`. Treat that file as public puzzle metadata, not as
+a secret store. Prefer `--no-solutions` when you do not need practice keys.
+
 ## Defaults
 
 | Control | Default |
@@ -24,9 +28,13 @@ treated as funds under management.
 Never commit:
 
 - `config/.env`
-- `state/` (hits, run logs, coverage, dry-run tx hex)
+- `state/` (hits, run logs, coverage, batch plans, dry-run tx hex)
 
 Hit and dry-run files are written with mode `0600` when created by this tool.
+`state/batch_plan.json` stores routing metadata only (no private keys).
+
+Host overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`) affect strategy knobs
+only; they are not credentials.
 
 ## Reporting
 

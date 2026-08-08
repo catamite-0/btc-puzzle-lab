@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "btc-puzzle-lab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → audit → optional sweep"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 keywords = ["bitcoin", "puzzle", "educational", "cli"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Education",
     "License :: OSI Approved :: MIT License",

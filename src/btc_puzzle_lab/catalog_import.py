@@ -15,6 +15,7 @@ from pathlib import Path
 
 import requests
 
+from btc_puzzle_lab import __version__
 from btc_puzzle_lab.crypto import normalize_privkey_hex
 from btc_puzzle_lab.paths import workspace_root
 
@@ -24,7 +25,7 @@ DEFAULT_EXPORT_URL = (
 SOURCE_PAGE = "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
 _FETCH_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; btc-puzzle-lab/0.2; "
+        f"Mozilla/5.0 (compatible; btc-puzzle-lab/{__version__}; "
         "+https://github.com/catamitez0-maker/btc-puzzle-lab)"
     ),
     "Accept": "text/csv,text/plain,*/*",

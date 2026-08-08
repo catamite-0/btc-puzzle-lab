@@ -1,8 +1,20 @@
+import re
+import tomllib
 from importlib.resources import files
+from pathlib import Path
 
+from btc_puzzle_lab import __version__
 from btc_puzzle_lab.catalog import load_puzzles
 from btc_puzzle_lab.engines import ENGINES
 from btc_puzzle_lab.paths import clear_path_cache, read_puzzles_json, workspace_root
+
+
+def test_version_matches_pyproject():
+    root = Path(__file__).resolve().parents[1]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert data["project"]["version"] == __version__
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert re.search(rf"^## \[{re.escape(__version__)}\]", changelog, flags=re.M)
 
 
 def test_packaged_catalog_readable():

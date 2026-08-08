@@ -76,6 +76,26 @@ def test_unsolved_without_engines_names_address_algorithm():
         notes="",
     )
     plan = plan_strategy(puzzle, host=_host())
+    assert plan.engine == "keyhunt"
+    assert "KEYHUNT_PATH" in plan.reason
+
+
+def test_unsolved_compute_tier_prefers_bitcrack_algorithm():
+    puzzle = Puzzle(
+        id=71,
+        bits=71,
+        address="1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU",
+        range_start=1 << 70,
+        range_end=(1 << 71) - 1,
+        pubkey_compressed_hex="",
+        practice_solution=None,
+        status="unsolved",
+        engine_default="window",
+        notes="",
+    )
+    plan = plan_strategy(
+        puzzle, host=HostProfile(cpus=8, mem_mb=16384, engines=frozenset())
+    )
     assert plan.engine == "bitcrack"
     assert "BITCRACK_PATH" in plan.reason
 
