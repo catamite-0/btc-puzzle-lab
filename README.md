@@ -86,10 +86,38 @@ Writable `state/` and `config/` resolve in this order:
 
 Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scripts/cloud-install.sh`). Do not put secrets or `config/.env` into the image.
 
+## Automation structure
+
+```text
+import-catalog → plan → batch → status
+                 ↓
+              strategy/run (single puzzle)
+                 ↓
+           HITS → audit → (optional) transfer
+```
+
+| Command | Role |
+|---|---|
+| `import-catalog` | Load full/practice catalog into `data/puzzles.json` |
+| `plan` | Build catalog-wide job board (`state/batch_plan.json`) via strategy routing |
+| `batch` | Execute ready jobs (limit/resume/stop-on-hit); skip blocked unless binary appears |
+| `status` | Matrix: job status × coverage × hit |
+| `run --auto` | Single-puzzle path (same strategy engine) |
+
+```bash
+btc-puzzle-lab import-catalog
+btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
+btc-puzzle-lab status
+btc-puzzle-lab batch --limit 5 --stop-on-hit
+```
+
+Blocked jobs are intentional: preferred algorithm is recorded even when the solver binary
+is missing (`BITCRACK_PATH` / `RCKANGAROO_PATH` / …).
+
 ## Commands
 
 ```bash
-# list practice puzzles
+# list active catalog puzzles
 python -m btc_puzzle_lab list
 
 # verify catalog solution derives the address (no search)
