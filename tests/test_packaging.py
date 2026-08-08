@@ -1,4 +1,5 @@
 from importlib.resources import files
+from pathlib import Path
 
 from btc_puzzle_lab.catalog import load_puzzles
 from btc_puzzle_lab.engines import ENGINES
@@ -31,3 +32,12 @@ def test_no_coinsense_hardcoded_paths():
     for spec in ENGINES.values():
         for candidate in spec.candidates:
             assert "coinsense" not in candidate
+
+
+def test_repo_catalog_matches_packaged_copy():
+    root = Path(__file__).resolve().parents[1]
+    repo_copy = (root / "data" / "puzzles.json").read_text(encoding="utf-8")
+    pkg_copy = files("btc_puzzle_lab").joinpath("data/puzzles.json").read_text(
+        encoding="utf-8"
+    )
+    assert repo_copy == pkg_copy
