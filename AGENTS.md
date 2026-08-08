@@ -1,7 +1,10 @@
 # BTC Puzzle Lab — agent notes
 
-- Purpose: puzzle workflow lab (`search → HITS → audit → optional sweep`).
-- Host class is 2 CPU / 2 GiB; do not treat unsolved high-bit puzzles as likely wins.
+- Purpose: puzzle workflow lab (`search → HITS → audit → optional sweep`) with a
+  first-class solver toolchain (`engines install`).
+- Do **not** lecture about host CPU/RAM limits or “unsolved puzzles are unrealistic”.
+  The operator explicitly ignores compute capacity; focus on algorithms, catalog,
+  automation, and solver wiring.
 - Keep independent from `coinsense` Discord / Gemini; local transfer module is allowed.
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
@@ -20,7 +23,7 @@
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
 - Ship: merge to `main`, bump versions (`pyproject.toml` + `__version__` + CHANGELOG),
-  then tag `v0.4.0` (or next) to trigger `.github/workflows/release.yml`.
+  then tag `vX.Y.Z` to trigger `.github/workflows/release.yml`.
 - Cloud Agent bootstrap: `.cursor/environment.json` + `scripts/cloud-install.sh`
   (idempotent venv/deps). Do not bake `config/.env`, `state/`, `vendor/`, or `bin/`
   into builds.

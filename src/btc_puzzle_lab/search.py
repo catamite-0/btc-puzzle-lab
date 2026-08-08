@@ -23,7 +23,7 @@ from btc_puzzle_lab.hits import Hit, append_hit, utc_now
 from btc_puzzle_lab.paths import scan_checkpoint_path
 from btc_puzzle_lab.runlog import log_event
 
-# Soft cap for pure-Python sequential full-range scans on 2 CPU / 2 GiB hosts.
+# Soft cap for pure-Python sequential full-range scans (local engine default).
 MAX_SEQUENTIAL_KEYS = 2_000_000
 DEFAULT_CHUNK_SIZE = 65_536
 

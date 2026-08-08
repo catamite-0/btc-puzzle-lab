@@ -73,7 +73,7 @@
       "practice_solution_hex": "dc2a04",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     },
     {
       "id": 28,
@@ -85,7 +85,7 @@
       "practice_solution_hex": "d916ce8",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     },
     {
       "id": 32,
@@ -97,7 +97,7 @@
       "practice_solution_hex": "b862a62e",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     },
     {
       "id": 40,
@@ -109,7 +109,7 @@
       "practice_solution_hex": "e9ae4933d6",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     },
     {
       "id": 45,
@@ -121,7 +121,7 @@
       "practice_solution_hex": "122fca143c05",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     },
     {
       "id": 50,
@@ -133,7 +133,7 @@
       "practice_solution_hex": "22bd43c2e9354",
       "status": "solved",
       "engine_default": "window",
-      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+      "notes": "Default practice path uses a narrow window around the known solution, or keyhunt/kangaroo via engines install."
     }
   ]
 }
