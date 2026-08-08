@@ -36,6 +36,15 @@ python -m pip install -e .
 cp config/.env.example config/.env   # only needed for auto-transfer
 ```
 
+### Cursor Cloud / Environment Builds
+
+Repo-managed cloud config lives in `.cursor/environment.json`:
+
+- base image: `.cursor/Dockerfile` (Python 3.12 + venv toolchain)
+- install: `scripts/cloud-install.sh` (idempotent `.venv-dev` + editable install)
+
+After merging, enable Builds for this environment in the Cloud Agents dashboard so new agents boot from a preinstalled snapshot. Do not put secrets or `config/.env` into the build.
+
 ## Commands
 
 ```bash
