@@ -6,6 +6,15 @@ from pathlib import Path
 
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.audit import audit_hits, export_audit_report
+from btc_puzzle_lab.batch import (
+    batch_plan_path,
+    build_plan,
+    format_plan,
+    format_status,
+    load_plan,
+    run_batch,
+    save_plan,
+)
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
 from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL, import_catalog
 from btc_puzzle_lab.coverage import format_coverage, load_coverage
@@ -283,6 +292,54 @@ def cmd_import_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    ids = [int(part) for part in args.ids.split(",")] if args.ids else None
+    plan = build_plan(
+        status=args.status,
+        bits_min=args.bits_min,
+        bits_max=args.bits_max,
+        puzzle_ids=ids,
+    )
+    path = Path(args.output) if args.output else batch_plan_path()
+    save_plan(plan, path)
+    print(f"wrote {path}")
+    print(format_plan(plan, verbose=args.verbose))
+    return 0
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    path = Path(args.plan) if args.plan else batch_plan_path()
+    plan = load_plan(path)
+    if plan is None:
+        print(f"error: no batch plan at {path} (run: btc-puzzle-lab plan)", file=sys.stderr)
+        return 2
+    result = run_batch(
+        plan,
+        limit=args.limit,
+        resume=not args.no_resume,
+        stop_on_hit=args.stop_on_hit,
+        include_blocked=args.include_blocked,
+        progress=not args.no_progress,
+        plan_path=path,
+    )
+    print(
+        f"batch attempted={result.attempted} hits={result.hits} done={result.done} "
+        f"errors={result.errors} skipped={result.skipped} "
+        f"stopped_early={result.stopped_early}"
+    )
+    print(f"plan={result.plan_path}")
+    if result.errors:
+        return 1
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    path = Path(args.plan) if args.plan else None
+    plan = load_plan(path) if path else load_plan()
+    print(format_status(plan))
+    return 0 if plan is not None else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -322,6 +379,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="omit practice_solution_hex even for publicly solved puzzles",
     )
     p_import.set_defaults(func=cmd_import_catalog)
+
+    p_plan = sub.add_parser("plan", help="build catalog-wide batch plan (algorithm routing)")
+    p_plan.add_argument(
+        "--status",
+        choices=["all", "solved", "unsolved"],
+        default="all",
+        help="filter catalog status (default: all)",
+    )
+    p_plan.add_argument("--bits-min", type=int, default=None, help="min bits inclusive")
+    p_plan.add_argument("--bits-max", type=int, default=None, help="max bits inclusive")
+    p_plan.add_argument(
+        "--ids",
+        default=None,
+        help="comma-separated puzzle ids, e.g. 1,5,20,71",
+    )
+    p_plan.add_argument(
+        "--output",
+        default=None,
+        help="plan path (default: state/batch_plan.json)",
+    )
+    p_plan.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print every job row",
+    )
+    p_plan.set_defaults(func=cmd_plan)
+
+    p_batch = sub.add_parser("batch", help="execute jobs from a batch plan")
+    p_batch.add_argument(
+        "--plan",
+        default=None,
+        help="plan path (default: state/batch_plan.json)",
+    )
+    p_batch.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="run at most N ready jobs this invocation",
+    )
+    p_batch.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="do not skip jobs already marked done/hit",
+    )
+    p_batch.add_argument(
+        "--stop-on-hit",
+        action="store_true",
+        help="stop the batch after the first new hit",
+    )
+    p_batch.add_argument(
+        "--include-blocked",
+        action="store_true",
+        help="retry blocked jobs if their engine binary became available",
+    )
+    p_batch.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable per-job search progress output",
+    )
+    p_batch.set_defaults(func=cmd_batch)
+
+    p_status = sub.add_parser("status", help="show batch plan × coverage × hits matrix")
+    p_status.add_argument(
+        "--plan",
+        default=None,
+        help="plan path (default: state/batch_plan.json)",
+    )
+    p_status.set_defaults(func=cmd_status)
 
     p_verify = sub.add_parser("verify", help="verify catalog solution derives the address")
     p_verify.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
