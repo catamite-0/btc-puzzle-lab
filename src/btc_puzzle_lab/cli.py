@@ -127,8 +127,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
         result = sweep_hit(outcome.hit, settings=settings)
         _print_transfer(result)
-        if result.status == "error":
-            return 1
+        if result.status in {"dry_run", "broadcast"}:
+            return 0
+        if result.status == "skipped":
+            return 3
+        return 1
     return 0
 
 

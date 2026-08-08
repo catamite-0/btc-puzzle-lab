@@ -46,7 +46,11 @@ python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.gi
 btc-puzzle-lab list
 ```
 
-Writable `state/` and `config/` go under the current working directory, or under `BTC_PUZZLE_LAB_HOME` if set.
+Writable `state/` and `config/` resolve in this order:
+
+1. `BTC_PUZZLE_LAB_HOME` (if set)
+2. the git checkout root (editable/`pip install -e .` installs)
+3. the current working directory (wheel / plain installs)
 
 ### Cursor Cloud
 
