@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "description": "Practice catalog for already-solved Bitcoin Puzzle Transaction entries. Solutions are public knowledge for solved puzzles and exist only to exercise the lab pipeline.",
+  "source": "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx",
+  "puzzles": [
+    {
+      "id": 1,
+      "bits": 1,
+      "address": "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
+      "range_start_hex": "1",
+      "range_end_hex": "1",
+      "pubkey_compressed_hex": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "practice_solution_hex": "1",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 5,
+      "bits": 5,
+      "address": "1E6NuFjCi27W5zoXg8TRdcSRq84zJeBW3k",
+      "range_start_hex": "10",
+      "range_end_hex": "1f",
+      "pubkey_compressed_hex": "02352bbf4a4cdd12564f93fa332ce333301d9ad40271f8107181340aef25be59d5",
+      "practice_solution_hex": "15",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 10,
+      "bits": 10,
+      "address": "1LeBZP5QCwwgXRtmVUvTVrraqPUokyLHqe",
+      "range_start_hex": "200",
+      "range_end_hex": "3ff",
+      "pubkey_compressed_hex": "03a7a4c30291ac1db24b4ab00c442aa832f7794b5a0959bec6e8d7fee802289dcd",
+      "practice_solution_hex": "202",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 16,
+      "bits": 16,
+      "address": "1BDyrQ6WoF8VN3g9SAS1iKZcPzFfnDVieY",
+      "range_start_hex": "8000",
+      "range_end_hex": "ffff",
+      "pubkey_compressed_hex": "029d8c5d35231d75eb87fd2c5f05f65281ed9573dc41853288c62ee94eb2590b7a",
+      "practice_solution_hex": "c936",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 20,
+      "bits": 20,
+      "address": "1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum",
+      "range_start_hex": "80000",
+      "range_end_hex": "fffff",
+      "pubkey_compressed_hex": "033c4a45cbd643ff97d77f41ea37e843648d50fd894b864b0d52febc62f6454f7c",
+      "practice_solution_hex": "d2c55",
+      "status": "solved",
+      "engine_default": "sequential",
+      "notes": "Full-range sequential search is practical on this host."
+    },
+    {
+      "id": 24,
+      "bits": 24,
+      "address": "1rSnXMr63jdCuegJFuidJqWxUPV7AtUf7",
+      "range_start_hex": "800000",
+      "range_end_hex": "ffffff",
+      "pubkey_compressed_hex": "036ea839d22847ee1dce3bfc5b11f6cf785b0682db58c35b63d1342eb221c3490c",
+      "practice_solution_hex": "dc2a04",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    },
+    {
+      "id": 28,
+      "bits": 28,
+      "address": "12jbtzBb54r97TCwW3G1gCFoumpckRAPdY",
+      "range_start_hex": "8000000",
+      "range_end_hex": "fffffff",
+      "pubkey_compressed_hex": "03e9e661838a96a65331637e2a3e948dc0756e5009e7cb5c36664d9b72dd18c0a7",
+      "practice_solution_hex": "d916ce8",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    },
+    {
+      "id": 32,
+      "bits": 32,
+      "address": "1FRoHA9xewq7DjrZ1psWJVeTer8gHRqEvR",
+      "range_start_hex": "80000000",
+      "range_end_hex": "ffffffff",
+      "pubkey_compressed_hex": "0209c58240e50e3ba3f833c82655e8725c037a2294e14cf5d73a5df8d56159de69",
+      "practice_solution_hex": "b862a62e",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    },
+    {
+      "id": 40,
+      "bits": 40,
+      "address": "1EeAxcprB2PpCnr34VfZdFrkUWuxyiNEFv",
+      "range_start_hex": "8000000000",
+      "range_end_hex": "ffffffffff",
+      "pubkey_compressed_hex": "03a2efa402fd5268400c77c20e574ba86409ededee7c4020e4b9f0edbee53de0d4",
+      "practice_solution_hex": "e9ae4933d6",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    },
+    {
+      "id": 45,
+      "bits": 45,
+      "address": "1NtiLNGegHWE3Mp9g2JPkgx6wUg4TW7bbk",
+      "range_start_hex": "100000000000",
+      "range_end_hex": "1fffffffffff",
+      "pubkey_compressed_hex": "026ecabd2d22fdb737be21975ce9a694e108eb94f3649c586cc7461c8abf5da71a",
+      "practice_solution_hex": "122fca143c05",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    },
+    {
+      "id": 50,
+      "bits": 50,
+      "address": "1MEzite4ReNuWaL5Ds17ePKt2dCxWEofwk",
+      "range_start_hex": "2000000000000",
+      "range_end_hex": "3ffffffffffff",
+      "pubkey_compressed_hex": "03f46f41027bbf44fafd6b059091b900dad41e6845b2241dc3254c7cdd3c5a16c6",
+      "practice_solution_hex": "22bd43c2e9354",
+      "status": "solved",
+      "engine_default": "window",
+      "notes": "Full-range search is not practical on 2 CPU / 2 GiB. Practice uses a narrow window around the known solution, or keyhunt if configured."
+    }
+  ]
+}

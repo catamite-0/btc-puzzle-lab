@@ -119,7 +119,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.show_key:
         print(f"private_key_hex={outcome.hit.private_key_hex}")
     if args.transfer:
-        _print_transfer(sweep_hit(outcome.hit))
+        settings = get_transfer_settings()
+        errors = validate_transfer_settings(settings)
+        if errors:
+            for err in errors:
+                print(f"config error: {err}", file=sys.stderr)
+            return 2
+        result = sweep_hit(outcome.hit, settings=settings)
+        _print_transfer(result)
+        if result.status == "error":
+            return 1
     return 0
 
 
@@ -220,7 +229,12 @@ def cmd_transfer(args: argparse.Namespace) -> int:
         )
         if not verify.ok:
             return 1
-    return 0 if result.status in {"dry_run", "broadcast", "skipped"} else 1
+    if result.status in {"dry_run", "broadcast"}:
+        return 0
+    if result.status == "skipped":
+        # Intentional gate (disabled / dry-run policy) — not a crash, but not success.
+        return 3
+    return 1
 
 
 def cmd_verify_dry_run(args: argparse.Namespace) -> int:
@@ -415,5 +429,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        args = parser.parse_args(argv)
+        return int(args.func(args))
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        print(f"error: {detail}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2

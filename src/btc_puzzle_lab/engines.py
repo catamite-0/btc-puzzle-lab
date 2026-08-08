@@ -32,17 +32,13 @@ ENGINES: dict[str, EngineBinary] = {
     "keyhunt": EngineBinary(
         name="keyhunt",
         env_var="KEYHUNT_PATH",
-        candidates=(
-            "/home/dev/projects/coinsense/bin/keyhunt",
-            "bin/keyhunt",
-        ),
+        candidates=("bin/keyhunt",),
         needs_pubkey=False,
     ),
     "bitcrack": EngineBinary(
         name="bitcrack",
         env_var="BITCRACK_PATH",
         candidates=(
-            "/home/dev/projects/coinsense/bin/cuBitCrack",
             "bin/cuBitCrack",
             "bin/clBitCrack",
             "bin/BitCrack",
@@ -53,7 +49,6 @@ ENGINES: dict[str, EngineBinary] = {
         name="kangaroo",
         env_var="KANGAROO_PATH",
         candidates=(
-            "/home/dev/projects/coinsense/bin/kangaroo",
             "bin/kangaroo",
             "bin/Kangaroo",
         ),
@@ -64,7 +59,6 @@ ENGINES: dict[str, EngineBinary] = {
         name="rckangaroo",
         env_var="RCKANGAROO_PATH",
         candidates=(
-            "/home/dev/projects/coinsense/bin/RCKangaroo",
             "bin/RCKangaroo",
             "bin/rckangaroo",
         ),
