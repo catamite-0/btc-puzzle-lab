@@ -101,7 +101,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         order=args.order,
         seed=args.seed,
         max_chunks=args.max_chunks,
-        dp=args.dp,
+        dp=16 if args.dp is None else args.dp,
     )
     if args.auto:
         plan = plan_strategy(puzzle)
@@ -116,7 +116,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             order=plan.order,
             seed=args.seed if args.seed is not None else plan.seed,
             max_chunks=args.max_chunks if args.max_chunks is not None else plan.max_chunks,
-            dp=args.dp if args.dp != 16 else plan.dp,
+            dp=args.dp if args.dp is not None else plan.dp,
         )
     outcome = run_puzzle(puzzle, **run_kwargs)
     print(f"engine={outcome.engine}: {outcome.message}")
@@ -341,8 +341,15 @@ def cmd_batch(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     path = Path(args.plan) if args.plan else None
     plan = load_plan(path) if path else load_plan()
+    if plan is None:
+        target = path if path is not None else batch_plan_path()
+        print(
+            f"error: no batch plan at {target} (run: btc-puzzle-lab plan)",
+            file=sys.stderr,
+        )
+        return 1
     print(format_status(plan))
-    return 0 if plan is not None else 1
+    return 0
 
 
 def cmd_host(_: argparse.Namespace) -> int:
@@ -417,6 +424,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_plan.add_argument(
         "--output",
+        "--plan",
+        dest="output",
         default=None,
         help="plan path (default: state/batch_plan.json)",
     )
@@ -517,8 +526,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--dp",
         type=int,
-        default=16,
-        help="RCKangaroo DP bits (default: 16)",
+        default=None,
+        help="RCKangaroo DP bits (default: adaptive with --auto, else 16)",
     )
     p_run.add_argument(
         "--workers",

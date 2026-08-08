@@ -370,13 +370,22 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
                 "prefer RCKangaroo/Kangaroo (set RCKANGAROO_PATH or KANGAROO_PATH)"
             ),
         )
-    preferred = "bitcrack" if profile.tier in {"gpu", "compute"} else "bitcrack"
+    # Algorithm-first when no solver is installed: GPU tiers name BitCrack,
+    # otherwise prefer CPU keyhunt so the board matches typical host capability.
+    preferred = (
+        "bitcrack" if profile.gpu or profile.tier in {"gpu", "compute"} else "keyhunt"
+    )
+    path_hint = (
+        "BITCRACK_PATH or KEYHUNT_PATH"
+        if preferred == "bitcrack"
+        else "KEYHUNT_PATH or BITCRACK_PATH"
+    )
     return StrategyPlan(
         engine=preferred,
         tier=profile.tier,
         reason=(
             f"tier={profile.tier}: {puzzle.bits}-bit address puzzle; "
-            "prefer BitCrack/keyhunt (set BITCRACK_PATH or KEYHUNT_PATH)"
+            f"prefer {preferred} (set {path_hint})"
         ),
     )
 

@@ -61,4 +61,4 @@ def get_puzzle(puzzle_id: int, path: Path | None = None) -> Puzzle:
     for puzzle in load_puzzles(path):
         if puzzle.id == puzzle_id:
             return puzzle
-    raise KeyError(f"unknown puzzle #{puzzle_id} (not in practice catalog)")
+    raise KeyError(f"unknown puzzle #{puzzle_id} (not in active catalog)")

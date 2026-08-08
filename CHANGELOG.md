@@ -4,12 +4,29 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-08
+
+Stable cut of the post-0.2 automation surface: full catalog import, catalog-wide
+batch board, and environment-adaptive host tiers.
+
 ### Added
 - `import-catalog` to load the full 160-puzzle Bitcoin Puzzle Transaction list
   from the bundled CSV snapshot (or `--url` / `--from-csv`)
 - Catalog automation board: `plan` → `batch` → `status` (`state/batch_plan.json`)
 - Environment-adaptive host tiers (`host` / `adapt`): CPU/RAM/GPU probe, knobs,
   and env overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`)
+
+### Fixed
+- Address-puzzle algorithm fallback now prefers `keyhunt` on standard/constrained
+  hosts and `bitcrack` on gpu/compute (was a no-op ternary)
+- `--auto --dp` no longer treats the CLI default as an explicit override
+- `plan --plan` accepted as an alias of `--output`
+- Unknown-puzzle errors refer to the active catalog (not only the practice set)
+- `status` missing-plan errors go to stderr (consistent with `batch`)
+
+### Changed
+- Packaged User-Agent follows `__version__`
+- Docs and release workflow aligned for tagged `v0.3.0` ships
 
 ## [0.2.0] — 2026-08-08
 
