@@ -24,7 +24,12 @@ from btc_puzzle_lab.hits import read_hits
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
-from btc_puzzle_lab.strategy import plan_strategy
+from btc_puzzle_lab.strategy import (
+    adapt_recommendations,
+    format_host_profile,
+    plan_strategy,
+    probe_host,
+)
 from btc_puzzle_lab.summary import build_summary, format_summary
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
 
@@ -340,6 +345,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if plan is not None else 1
 
 
+def cmd_host(_: argparse.Namespace) -> int:
+    profile = probe_host()
+    print(format_host_profile(profile))
+    return 0
+
+
+def cmd_adapt(_: argparse.Namespace) -> int:
+    profile = probe_host()
+    print(format_host_profile(profile))
+    print()
+    print("recommendations:")
+    for tip in adapt_recommendations(profile):
+        print(f"  - {tip}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -458,6 +479,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_engines = sub.add_parser("engines", help="list external solver binaries and paths")
     p_engines.set_defaults(func=cmd_engines)
+
+    p_host = sub.add_parser("host", help="probe host profile (CPU/RAM/GPU/engines/tier)")
+    p_host.set_defaults(func=cmd_host)
+
+    p_adapt = sub.add_parser(
+        "adapt",
+        help="show environment-adaptive profile and recommended next actions",
+    )
+    p_adapt.set_defaults(func=cmd_adapt)
 
     p_run = sub.add_parser("run", help="search / practice-run a puzzle and append HITS")
     p_run.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")

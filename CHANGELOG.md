@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 - `import-catalog` to load the full 160-puzzle Bitcoin Puzzle Transaction list
   from the bundled CSV snapshot (or `--url` / `--from-csv`)
 - Catalog automation board: `plan` → `batch` → `status` (`state/batch_plan.json`)
+- Environment-adaptive host tiers (`host` / `adapt`): CPU/RAM/GPU probe, knobs,
+  and env overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`)
 
 ## [0.2.0] — 2026-08-08
 
