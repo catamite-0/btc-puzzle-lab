@@ -89,26 +89,50 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 ## Automation structure
 
 ```text
-import-catalog → plan → batch → status
-                 ↓
-              strategy/run (single puzzle)
-                 ↓
-           HITS → audit → (optional) transfer
+host / adapt ──► import-catalog → plan → batch → status
+                      ↓
+                 strategy / run --auto（单题，同一套自适应规则）
+                      ↓
+                HITS → audit → (optional) transfer
 ```
 
 | Command | Role |
 |---|---|
+| `host` | Probe CPU / RAM / GPU / disk / engines → tier |
+| `adapt` | Same probe + recommended next actions |
 | `import-catalog` | Load full/practice catalog into `data/puzzles.json` |
-| `plan` | Build catalog-wide job board (`state/batch_plan.json`) via strategy routing |
+| `plan` | Build catalog-wide job board (`state/batch_plan.json`) via adaptive strategy |
 | `batch` | Execute ready jobs (limit/resume/stop-on-hit); skip blocked unless binary appears |
 | `status` | Matrix: job status × coverage × hit |
-| `run --auto` | Single-puzzle path (same strategy engine) |
+| `run --auto` | Single-puzzle path (same adaptive strategy) |
 
 ```bash
+btc-puzzle-lab host
+btc-puzzle-lab adapt
 btc-puzzle-lab import-catalog
 btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
 btc-puzzle-lab status
 btc-puzzle-lab batch --limit 5 --stop-on-hit
+```
+
+### Environment adaptation
+
+Host is classified into a tier that drives workers / threads / chunk / window / dp:
+
+| Tier | When | Effect |
+|---|---|---|
+| `constrained` | low RAM/CPU | small chunks, 1 worker |
+| `standard` | ~2+ GiB, 2+ CPU | balanced local + external |
+| `gpu` | NVIDIA detected or GPU solvers installed | prefer BitCrack / RCKangaroo |
+| `compute` | high CPU/RAM | larger chunks/windows/threads |
+
+Overrides (container / CI friendly):
+
+```bash
+export BTC_PUZZLE_LAB_CPUS=4
+export BTC_PUZZLE_LAB_MEM_MB=8192
+export BTC_PUZZLE_LAB_GPU=1   # or 0 to force off
+btc-puzzle-lab adapt
 ```
 
 Blocked jobs are intentional: preferred algorithm is recorded even when the solver binary

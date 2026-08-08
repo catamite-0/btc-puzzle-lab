@@ -216,11 +216,7 @@ def build_plan(
         created_at=now,
         updated_at=now,
         source="plan_strategy",
-        host={
-            "cpus": profile.cpus,
-            "mem_mb": profile.mem_mb,
-            "engines": sorted(profile.engines),
-        },
+        host=profile.to_dict(),
         filters={
             "status": status,
             "bits_min": bits_min,
@@ -393,7 +389,8 @@ def format_plan(plan: BatchPlan, *, verbose: bool = False) -> str:
         counts[job.job_status] = counts.get(job.job_status, 0) + 1
     lines = [
         f"batch plan jobs={len(plan.jobs)} updated={plan.updated_at}",
-        f"host cpus={plan.host.get('cpus')} mem_mb={plan.host.get('mem_mb')} "
+        f"host tier={plan.host.get('tier', '?')} cpus={plan.host.get('cpus')} "
+        f"mem_mb={plan.host.get('mem_mb')} gpu={plan.host.get('gpu')} "
         f"engines={','.join(plan.host.get('engines') or []) or '(none)'}",
         f"filters={plan.filters}",
         "status: "

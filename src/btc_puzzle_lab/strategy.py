@@ -1,13 +1,17 @@
-"""Host-aware search strategy for `run --auto`.
+"""Environment-adaptive search strategy.
 
-Flat decision table: probe host once, then return one plan.
+Probe the host once (CPU / RAM / GPU / installed engines), classify a tier,
+then return one algorithm plan per puzzle for ``run --auto`` / ``plan`` / ``batch``.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 from btc_puzzle_lab.catalog import Puzzle
 from btc_puzzle_lab.engines import available_engines, resolve_binary
@@ -15,6 +19,9 @@ from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, MAX_SEQUENTIAL_KEYS
 
 SEQUENTIAL_BITS = 20
 LOW_MEM_MB = 2048
+STANDARD_MEM_MB = 8192
+
+HostTier = Literal["constrained", "standard", "gpu", "compute"]
 
 
 @dataclass(frozen=True)
@@ -22,6 +29,23 @@ class HostProfile:
     cpus: int
     mem_mb: int
     engines: frozenset[str]
+    gpu: bool = False
+    gpu_name: str = ""
+    disk_free_mb: int | None = None
+    tier: HostTier = "constrained"
+    overrides: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cpus": self.cpus,
+            "mem_mb": self.mem_mb,
+            "engines": sorted(self.engines),
+            "gpu": self.gpu,
+            "gpu_name": self.gpu_name,
+            "disk_free_mb": self.disk_free_mb,
+            "tier": self.tier,
+            "overrides": list(self.overrides),
+        }
 
 
 @dataclass(frozen=True)
@@ -37,9 +61,11 @@ class StrategyPlan:
     seed: int | None = None
     window: int = 1_000_000
     max_chunks: int | None = None
+    tier: HostTier = "constrained"
 
     def format(self) -> str:
         bits = [
+            f"tier={self.tier}",
             f"engine={self.engine}",
             f"workers={self.workers}",
             f"coverage={self.coverage}",
@@ -67,11 +93,99 @@ def _mem_mb() -> int:
     return LOW_MEM_MB
 
 
+def _disk_free_mb(path: Path | None = None) -> int | None:
+    try:
+        usage = shutil.disk_usage(str(path or Path.cwd()))
+        return usage.free // (1024 * 1024)
+    except OSError:
+        return None
+
+
+def _probe_gpu() -> tuple[bool, str]:
+    """Best-effort NVIDIA GPU probe (optional)."""
+    if shutil.which("nvidia-smi") is None:
+        return False, ""
+    try:
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    if proc.returncode != 0:
+        return False, ""
+    names = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not names:
+        return False, ""
+    return True, names[0]
+
+
+def classify_tier(
+    *,
+    cpus: int,
+    mem_mb: int,
+    gpu: bool,
+    engines: frozenset[str],
+) -> HostTier:
+    has_gpu_solver = bool(engines.intersection({"bitcrack", "rckangaroo"}))
+    if gpu or has_gpu_solver:
+        return "gpu"
+    if mem_mb >= STANDARD_MEM_MB and cpus >= 4:
+        return "compute"
+    if mem_mb >= LOW_MEM_MB and cpus >= 2:
+        return "standard"
+    return "constrained"
+
+
+def _env_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return int(raw)
+
+
 def probe_host() -> HostProfile:
+    overrides: list[str] = []
+    cpus = max(1, os.cpu_count() or 1)
+    env_cpus = _env_int("BTC_PUZZLE_LAB_CPUS")
+    if env_cpus is not None and env_cpus >= 1:
+        cpus = env_cpus
+        overrides.append("BTC_PUZZLE_LAB_CPUS")
+
+    mem_mb = _mem_mb()
+    env_mem = _env_int("BTC_PUZZLE_LAB_MEM_MB")
+    if env_mem is not None and env_mem >= 256:
+        mem_mb = env_mem
+        overrides.append("BTC_PUZZLE_LAB_MEM_MB")
+
+    force_gpu = os.environ.get("BTC_PUZZLE_LAB_GPU", "").strip().lower()
+    if force_gpu in {"1", "true", "yes", "on"}:
+        gpu, gpu_name = True, "forced"
+        overrides.append("BTC_PUZZLE_LAB_GPU")
+    elif force_gpu in {"0", "false", "no", "off"}:
+        gpu, gpu_name = False, ""
+        overrides.append("BTC_PUZZLE_LAB_GPU")
+    else:
+        gpu, gpu_name = _probe_gpu()
+
+    engines = frozenset(available_engines())
+    tier = classify_tier(cpus=cpus, mem_mb=mem_mb, gpu=gpu, engines=engines)
     return HostProfile(
-        cpus=max(1, os.cpu_count() or 1),
-        mem_mb=_mem_mb(),
-        engines=frozenset(available_engines()),
+        cpus=cpus,
+        mem_mb=mem_mb,
+        engines=engines,
+        gpu=gpu,
+        gpu_name=gpu_name,
+        disk_free_mb=_disk_free_mb(),
+        tier=tier,
+        overrides=tuple(overrides),
     )
 
 
@@ -79,12 +193,73 @@ def _has_pubkey(puzzle: Puzzle) -> bool:
     return bool(puzzle.pubkey_compressed_hex)
 
 
+def _resource_knobs(profile: HostProfile) -> dict[str, int | None]:
+    """Map host tier → workers/threads/chunk/window/max_chunks."""
+    if profile.tier == "constrained":
+        return {
+            "workers": 1,
+            "threads": min(max(1, profile.cpus), 2),
+            "chunk": 16_384,
+            "window": 250_000,
+            "max_chunks": 2,
+            "dp": 14,
+        }
+    if profile.tier == "standard":
+        return {
+            "workers": min(2, profile.cpus),
+            "threads": min(max(1, profile.cpus), 4),
+            "chunk": DEFAULT_CHUNK_SIZE,
+            "window": 1_000_000,
+            "max_chunks": 4,
+            "dp": 16,
+        }
+    if profile.tier == "gpu":
+        return {
+            "workers": min(2, profile.cpus),
+            "threads": min(max(1, profile.cpus), 8),
+            "chunk": DEFAULT_CHUNK_SIZE,
+            "window": 2_000_000,
+            "max_chunks": 8,
+            "dp": 16,
+        }
+    # compute
+    return {
+        "workers": min(4, profile.cpus),
+        "threads": min(max(1, profile.cpus), 8),
+        "chunk": DEFAULT_CHUNK_SIZE * 2,
+        "window": 4_000_000,
+        "max_chunks": 16,
+        "dp": 18,
+    }
+
+
 def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPlan:
     """Choose one engine/config for this puzzle on this host."""
-    profile = host or probe_host()
-    workers = 1 if profile.mem_mb < LOW_MEM_MB else min(2, profile.cpus)
-    threads = min(max(1, profile.cpus), 4)
-    chunk = 16_384 if profile.mem_mb < LOW_MEM_MB else DEFAULT_CHUNK_SIZE
+    probed = host or probe_host()
+    # Always recompute tier from resources so callers can pass partial HostProfile.
+    tier = classify_tier(
+        cpus=probed.cpus,
+        mem_mb=probed.mem_mb,
+        gpu=probed.gpu,
+        engines=probed.engines,
+    )
+    profile = HostProfile(
+        cpus=probed.cpus,
+        mem_mb=probed.mem_mb,
+        engines=probed.engines,
+        gpu=probed.gpu,
+        gpu_name=probed.gpu_name,
+        disk_free_mb=probed.disk_free_mb,
+        tier=tier,
+        overrides=probed.overrides,
+    )
+    knobs = _resource_knobs(profile)
+    workers = int(knobs["workers"] or 1)
+    threads = int(knobs["threads"] or 1)
+    chunk = int(knobs["chunk"] or DEFAULT_CHUNK_SIZE)
+    window = int(knobs["window"] or 1_000_000)
+    max_chunks = knobs["max_chunks"]
+    dp = int(knobs["dp"] or 16)
     range_size = puzzle.range_end - puzzle.range_start + 1
     installed = profile.engines
 
@@ -94,21 +269,30 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             return StrategyPlan(
                 engine="rckangaroo",
                 threads=threads,
-                dp=16,
-                reason=f"RCKangaroo available for {puzzle.bits}-bit pubkey search",
+                dp=dp,
+                tier=profile.tier,
+                reason=(
+                    f"tier={profile.tier}: RCKangaroo available for "
+                    f"{puzzle.bits}-bit pubkey search"
+                ),
             )
         if "kangaroo" in installed:
             return StrategyPlan(
                 engine="kangaroo",
                 threads=threads,
-                reason=f"Kangaroo available for {puzzle.bits}-bit pubkey search",
+                tier=profile.tier,
+                reason=(
+                    f"tier={profile.tier}: Kangaroo available for "
+                    f"{puzzle.bits}-bit pubkey search"
+                ),
             )
 
     if puzzle.bits <= 16:
         return StrategyPlan(
             engine="sequential",
             workers=workers,
-            reason=f"tiny {puzzle.bits}-bit range; full sequential",
+            tier=profile.tier,
+            reason=f"tier={profile.tier}: tiny {puzzle.bits}-bit range; full sequential",
         )
 
     if puzzle.bits <= SEQUENTIAL_BITS and range_size <= MAX_SEQUENTIAL_KEYS:
@@ -118,27 +302,39 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
                 workers=workers,
                 coverage=True,
                 chunk_size=chunk,
-                max_chunks=4,
-                reason=f"{puzzle.bits}-bit range fits sequential; coverage in chunks",
+                max_chunks=max_chunks,
+                tier=profile.tier,
+                reason=(
+                    f"tier={profile.tier}: {puzzle.bits}-bit range fits sequential; "
+                    "coverage in chunks"
+                ),
             )
         return StrategyPlan(
             engine="sequential",
             workers=workers,
-            reason=f"{puzzle.bits}-bit range; single-pass sequential",
+            tier=profile.tier,
+            reason=f"tier={profile.tier}: {puzzle.bits}-bit range; single-pass sequential",
         )
 
-    # Address-only GPU brute force before CPU keyhunt.
+    # Prefer GPU address search when host/tier indicates GPU capability.
     if "bitcrack" in installed and puzzle.bits > SEQUENTIAL_BITS:
         return StrategyPlan(
             engine="bitcrack",
-            reason=f"BitCrack available for {puzzle.bits}-bit address brute-force",
+            tier=profile.tier,
+            reason=(
+                f"tier={profile.tier}: BitCrack available for "
+                f"{puzzle.bits}-bit address brute-force"
+            ),
         )
 
     if "keyhunt" in installed:
         return StrategyPlan(
             engine="keyhunt",
             threads=threads,
-            reason=f"keyhunt present for {puzzle.bits}-bit address search",
+            tier=profile.tier,
+            reason=(
+                f"tier={profile.tier}: keyhunt present for {puzzle.bits}-bit address search"
+            ),
         )
 
     if puzzle.practice_solution is not None:
@@ -153,33 +349,90 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             workers=workers,
             coverage=True,
             chunk_size=chunk,
-            window=min(1_000_000, max(chunk * 4, 50_000)),
-            max_chunks=2,
+            window=min(window, max(chunk * 4, 50_000)),
+            max_chunks=max_chunks if max_chunks is not None else 2,
+            tier=profile.tier,
             reason=(
-                f"{puzzle.bits}-bit full range too large here; "
+                f"tier={profile.tier}: {puzzle.bits}-bit full range too large locally; "
                 f"practice window + coverage{hint}"
             ),
         )
 
-    # Algorithm-first fallback for unsolved / no-binary hosts: name the preferred
-    # engine class even when the binary is not installed yet.
+    # Algorithm-first fallback for unsolved / no-binary hosts.
     if _has_pubkey(puzzle) and puzzle.bits >= 32:
         return StrategyPlan(
             engine="rckangaroo",
             threads=threads,
-            dp=16,
+            dp=dp,
+            tier=profile.tier,
             reason=(
-                f"{puzzle.bits}-bit pubkey puzzle; prefer RCKangaroo/Kangaroo "
-                "(set RCKANGAROO_PATH or KANGAROO_PATH)"
+                f"tier={profile.tier}: {puzzle.bits}-bit pubkey puzzle; "
+                "prefer RCKangaroo/Kangaroo (set RCKANGAROO_PATH or KANGAROO_PATH)"
             ),
         )
+    preferred = "bitcrack" if profile.tier in {"gpu", "compute"} else "bitcrack"
     return StrategyPlan(
-        engine="bitcrack",
+        engine=preferred,
+        tier=profile.tier,
         reason=(
-            f"{puzzle.bits}-bit address puzzle; prefer BitCrack/keyhunt "
-            "(set BITCRACK_PATH or KEYHUNT_PATH)"
+            f"tier={profile.tier}: {puzzle.bits}-bit address puzzle; "
+            "prefer BitCrack/keyhunt (set BITCRACK_PATH or KEYHUNT_PATH)"
         ),
     )
+
+
+def format_host_profile(profile: HostProfile | None = None) -> str:
+    host = profile or probe_host()
+    lines = [
+        f"tier           : {host.tier}",
+        f"cpus           : {host.cpus}",
+        f"mem_mb         : {host.mem_mb}",
+        f"gpu            : {host.gpu}"
+        + (f" ({host.gpu_name})" if host.gpu_name else ""),
+        f"disk_free_mb   : {host.disk_free_mb if host.disk_free_mb is not None else 'n/a'}",
+        f"engines        : {', '.join(sorted(host.engines)) or '(none detected)'}",
+        f"overrides      : {', '.join(host.overrides) or '(none)'}",
+        "",
+        "tier meaning:",
+        "  constrained : low RAM/CPU — small chunks, few workers",
+        "  standard    : typical 2–8 GiB host — balanced local + external",
+        "  gpu         : NVIDIA or GPU solvers present — prefer BitCrack/RCKangaroo",
+        "  compute     : high CPU/RAM — larger chunks/windows/threads",
+        "",
+        "env overrides: BTC_PUZZLE_LAB_CPUS, BTC_PUZZLE_LAB_MEM_MB, BTC_PUZZLE_LAB_GPU",
+    ]
+    knobs = _resource_knobs(host)
+    lines.extend(
+        [
+            "",
+            "adaptive knobs:",
+            f"  workers={knobs['workers']} threads={knobs['threads']} "
+            f"chunk={knobs['chunk']} window={knobs['window']} "
+            f"max_chunks={knobs['max_chunks']} dp={knobs['dp']}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
+    """Human-readable next actions for this environment."""
+    host = profile or probe_host()
+    tips: list[str] = []
+    if host.tier == "constrained":
+        tips.append("keep batch --limit small; prefer solved/practice ids for local engines")
+    if not host.engines:
+        tips.append(
+            "no external solvers detected — set KEYHUNT_PATH / BITCRACK_PATH / "
+            "KANGAROO_PATH / RCKANGAROO_PATH for unsolved high-bit work"
+        )
+    if host.gpu and "bitcrack" not in host.engines:
+        tips.append("GPU seen but BitCrack missing — set BITCRACK_PATH to enable GPU address search")
+    if "rckangaroo" not in host.engines and "kangaroo" not in host.engines:
+        tips.append("no kangaroo-class solver — pubkey puzzles will stay blocked until configured")
+    if host.disk_free_mb is not None and host.disk_free_mb < 512:
+        tips.append("low free disk (<512 MiB) — coverage/batch state may fail to persist")
+    tips.append("run: btc-puzzle-lab plan --status unsolved && btc-puzzle-lab status")
+    return tips
 
 
 def describe_binaries() -> str:
@@ -189,3 +442,5 @@ def describe_binaries() -> str:
         path = resolve_binary(name)
         rows.append(f"{name}={'yes' if path else 'no'}")
     return " ".join(rows)
+
+
