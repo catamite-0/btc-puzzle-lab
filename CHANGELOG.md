@@ -5,8 +5,7 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Changed
-- Drop host-class / compute-capacity lectures from agent notes and docs
-  (operator ignores compute limits; focus on algorithms and toolchain)
+- Agent notes keep engineering focus only (algorithms, catalog, toolchain)
 
 ## [0.4.0] — 2026-08-08
 
