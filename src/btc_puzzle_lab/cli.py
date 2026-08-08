@@ -9,6 +9,7 @@ from btc_puzzle_lab.audit import audit_hits, export_audit_report
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
 from btc_puzzle_lab.coverage import format_coverage, load_coverage
 from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
@@ -16,6 +17,15 @@ from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_set
 from btc_puzzle_lab.strategy import plan_strategy
 from btc_puzzle_lab.summary import build_summary, format_summary
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
+
+_ENGINE_CHOICES = [
+    "sequential",
+    "window",
+    "inject-known",
+    "keyhunt",
+    "kangaroo",
+    "rckangaroo",
+]
 
 
 def _print_transfer(result: TransferResult) -> None:
@@ -75,6 +85,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         order=args.order,
         seed=args.seed,
         max_chunks=args.max_chunks,
+        dp=args.dp,
     )
     if args.auto:
         plan = plan_strategy(puzzle)
@@ -89,6 +100,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             order=plan.order,
             seed=args.seed if args.seed is not None else plan.seed,
             max_chunks=args.max_chunks if args.max_chunks is not None else plan.max_chunks,
+            dp=args.dp if args.dp != 16 else plan.dp,
         )
     outcome = run_puzzle(puzzle, **run_kwargs)
     print(f"engine={outcome.engine}: {outcome.message}")
@@ -115,6 +127,11 @@ def cmd_strategy(args: argparse.Namespace) -> int:
     plan = plan_strategy(puzzle)
     print(f"puzzle #{puzzle.id} bits={puzzle.bits}")
     print(plan.format())
+    return 0
+
+
+def cmd_engines(_: argparse.Namespace) -> int:
+    print(format_engine_status())
     return 0
 
 
@@ -244,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_strategy.set_defaults(func=cmd_strategy)
 
+    p_engines = sub.add_parser("engines", help="list external solver binaries and paths")
+    p_engines.set_defaults(func=cmd_engines)
+
     p_run = sub.add_parser("run", help="search / practice-run a puzzle and append HITS")
     p_run.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_run.add_argument(
@@ -253,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--engine",
-        choices=["sequential", "window", "inject-known", "keyhunt"],
+        choices=_ENGINE_CHOICES,
         default=None,
         help="override catalog default engine (also overrides --auto engine)",
     )
@@ -263,7 +283,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=1_000_000,
         help="keys in practice window for --engine window (default: 1000000)",
     )
-    p_run.add_argument("--threads", type=int, default=2, help="keyhunt threads")
+    p_run.add_argument(
+        "--threads",
+        type=int,
+        default=2,
+        help="threads for keyhunt/kangaroo (default: 2)",
+    )
+    p_run.add_argument(
+        "--dp",
+        type=int,
+        default=16,
+        help="RCKangaroo DP bits (default: 16)",
+    )
     p_run.add_argument(
         "--workers",
         type=int,

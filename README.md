@@ -52,6 +52,12 @@ python -m btc_puzzle_lab run 20
 python -m btc_puzzle_lab strategy 40
 python -m btc_puzzle_lab run 40 --auto
 
+# list / manually call external solvers
+python -m btc_puzzle_lab engines
+python -m btc_puzzle_lab run 40 --engine rckangaroo
+python -m btc_puzzle_lab run 40 --engine kangaroo
+python -m btc_puzzle_lab run 20 --engine keyhunt
+
 # parallel workers + resume support
 python -m btc_puzzle_lab run 20 --workers 2 --resume
 
@@ -134,14 +140,26 @@ Dry-run artifacts land in ignored `state/dryrun_*.txhex` (`0600`). Signed hex is
 
 Supports sweeping compressed/uncompressed Legacy P2PKH and compressed Native Segwit P2WPKH, including multi-UTXO consolidate sweeps.
 
-### Optional Keyhunt
+### External solvers
 
-If you already have a Keyhunt binary (for example from `coinsense`):
+Lab does not vendor GPU/CPU solvers; it adapts installed binaries:
+
+| Engine | Env | Needs | Role |
+|---|---|---|---|
+| `keyhunt` | `KEYHUNT_PATH` | address | CPU address / range search |
+| `kangaroo` | `KANGAROO_PATH` | compressed pubkey | classic Pollard kangaroo |
+| `rckangaroo` | `RCKANGAROO_PATH` | compressed pubkey | faster kangaroo (preferred when present) |
 
 ```bash
-export KEYHUNT_PATH=/home/dev/projects/coinsense/bin/keyhunt
-python -m btc_puzzle_lab run 20 --engine keyhunt
+export KEYHUNT_PATH=/path/to/keyhunt
+export KANGAROO_PATH=/path/to/Kangaroo
+export RCKANGAROO_PATH=/path/to/RCKangaroo
+python -m btc_puzzle_lab engines
+python -m btc_puzzle_lab run 40 --auto          # picks rckangaroo/kangaroo/keyhunt when suitable
+python -m btc_puzzle_lab run 40 --engine rckangaroo --dp 16
 ```
+
+`--auto` preference for large pubkey puzzles: `rckangaroo` → `kangaroo` → `keyhunt` → local window/coverage.
 
 ## Validate
 

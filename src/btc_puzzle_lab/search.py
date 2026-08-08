@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,12 +13,12 @@ from btc_puzzle_lab.coverage import (
     save_coverage,
 )
 from btc_puzzle_lab.crypto import (
-    normalize_privkey_hex,
     privkey_bytes,
     privkey_to_p2pkh_address,
     sequential_find_p2pkh,
     sequential_find_p2pkh_parallel,
 )
+from btc_puzzle_lab.engines import ENGINES, run_external_engine
 from btc_puzzle_lab.hits import Hit, append_hit, utc_now
 from btc_puzzle_lab.paths import scan_checkpoint_path
 from btc_puzzle_lab.runlog import log_event
@@ -522,93 +520,30 @@ def run_inject_known(puzzle: Puzzle) -> SearchOutcome:
     return _record_hit(puzzle, puzzle.practice_solution, "inject-known")
 
 
-def resolve_keyhunt_path() -> Path | None:
-    env = os.environ.get("KEYHUNT_PATH")
-    if env:
-        path = Path(env).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
-            return path
-    candidates = [
-        Path("/home/dev/projects/coinsense/bin/keyhunt"),
-        Path.cwd() / "bin" / "keyhunt",
-    ]
-    for path in candidates:
-        if path.is_file() and os.access(path, os.X_OK):
-            return path
-    return None
+def run_external(
+    puzzle: Puzzle,
+    engine: str,
+    *,
+    threads: int = 2,
+    dp: int = 16,
+) -> SearchOutcome:
+    log_event(
+        "search_start",
+        puzzle_id=puzzle.id,
+        engine=engine,
+        threads=threads,
+        dp=dp,
+    )
+    result = run_external_engine(puzzle, engine, threads=threads, dp=dp)
+    if result.secret is None:
+        log_event("search_miss", puzzle_id=puzzle.id, engine=engine, detail=result.message)
+        return SearchOutcome(hit=None, engine=engine, message=result.message)
+    return _record_hit(puzzle, result.secret, engine)
 
 
+# Backward-compatible alias used by older tests/docs.
 def run_keyhunt(puzzle: Puzzle, *, threads: int = 2) -> SearchOutcome:
-    binary = resolve_keyhunt_path()
-    if binary is None:
-        return SearchOutcome(
-            hit=None,
-            engine="keyhunt",
-            message="keyhunt not found; set KEYHUNT_PATH or place bin/keyhunt",
-        )
-    with tempfile.TemporaryDirectory(prefix="btc-puzzle-lab-") as tmp:
-        target = Path(tmp) / "target.txt"
-        target.write_text(puzzle.address + "\n", encoding="utf-8")
-        cmd = [
-            str(binary),
-            "-m",
-            "address",
-            "-f",
-            str(target),
-            "-b",
-            str(puzzle.bits),
-            "-l",
-            "compress",
-            "-t",
-            str(max(1, threads)),
-            "-s",
-            "5",
-            "-q",
-        ]
-        print("running:", " ".join(cmd), flush=True)
-        log_event(
-            "search_start",
-            puzzle_id=puzzle.id,
-            engine="keyhunt",
-            threads=threads,
-        )
-        proc = subprocess.run(
-            cmd,
-            cwd=tmp,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        output = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        secret = _parse_keyhunt_privkey(output)
-        if secret is None:
-            log_event(
-                "search_miss",
-                puzzle_id=puzzle.id,
-                engine="keyhunt",
-                exit_code=proc.returncode,
-            )
-            return SearchOutcome(
-                hit=None,
-                engine="keyhunt",
-                message=f"keyhunt exited {proc.returncode}; no private key parsed",
-            )
-        return _record_hit(puzzle, secret, "keyhunt")
-
-
-def _parse_keyhunt_privkey(output: str) -> int | None:
-    for line in output.splitlines():
-        lower = line.lower()
-        if "private key" in lower or "privkey" in lower:
-            parts = line.replace(":", " ").split()
-            for part in parts:
-                token = part.lower().removeprefix("0x")
-                if 1 <= len(token) <= 64 and all(c in "0123456789abcdef" for c in token):
-                    try:
-                        return int(normalize_privkey_hex(token), 16)
-                    except ValueError:
-                        continue
-    return None
+    return run_external(puzzle, "keyhunt", threads=threads)
 
 
 def run_puzzle(
@@ -625,6 +560,7 @@ def run_puzzle(
     order: str = "sequential",
     seed: int | None = None,
     max_chunks: int | None = None,
+    dp: int = 16,
 ) -> SearchOutcome:
     choice = (engine or puzzle.engine_default).lower()
     if choice in {"sequential", "seq"}:
@@ -654,6 +590,6 @@ def run_puzzle(
         )
     if choice in {"inject", "inject-known", "known"}:
         return run_inject_known(puzzle)
-    if choice == "keyhunt":
-        return run_keyhunt(puzzle, threads=threads)
+    if choice in ENGINES:
+        return run_external(puzzle, choice, threads=threads, dp=dp)
     return SearchOutcome(hit=None, engine=choice, message=f"unknown engine: {choice}")

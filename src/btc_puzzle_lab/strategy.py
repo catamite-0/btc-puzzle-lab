@@ -1,7 +1,6 @@
 """Host-aware search strategy for `run --auto`.
 
 Flat decision table: probe host once, then return one plan.
-No kangaroo wiring yet — we only choose among local engines.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from btc_puzzle_lab.catalog import Puzzle
+from btc_puzzle_lab.engines import available_engines, resolve_binary
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, MAX_SEQUENTIAL_KEYS
 
 SEQUENTIAL_BITS = 20
@@ -21,7 +21,7 @@ LOW_MEM_MB = 2048
 class HostProfile:
     cpus: int
     mem_mb: int
-    has_keyhunt: bool
+    engines: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class StrategyPlan:
     reason: str
     workers: int = 1
     threads: int = 2
+    dp: int = 16
     coverage: bool = False
     chunk_size: int = DEFAULT_CHUNK_SIZE
     order: str = "sequential"
@@ -44,14 +45,15 @@ class StrategyPlan:
             f"coverage={self.coverage}",
         ]
         if self.coverage:
-            bits.append(f"chunk_size={self.chunk_size}")
-            bits.append(f"order={self.order}")
+            bits += [f"chunk_size={self.chunk_size}", f"order={self.order}"]
             if self.max_chunks is not None:
                 bits.append(f"max_chunks={self.max_chunks}")
         if self.engine == "window":
             bits.append(f"window={self.window}")
         if self.engine == "keyhunt":
             bits.append(f"threads={self.threads}")
+        if self.engine in {"kangaroo", "rckangaroo"}:
+            bits += [f"threads={self.threads}", f"dp={self.dp}"]
         return f"{' '.join(bits)} — {self.reason}"
 
 
@@ -65,26 +67,16 @@ def _mem_mb() -> int:
     return LOW_MEM_MB
 
 
-def _has_keyhunt() -> bool:
-    env = os.environ.get("KEYHUNT_PATH")
-    candidates = []
-    if env:
-        candidates.append(Path(env).expanduser())
-    candidates.extend(
-        (
-            Path("/home/dev/projects/coinsense/bin/keyhunt"),
-            Path.cwd() / "bin" / "keyhunt",
-        )
-    )
-    return any(path.is_file() and os.access(path, os.X_OK) for path in candidates)
-
-
 def probe_host() -> HostProfile:
     return HostProfile(
         cpus=max(1, os.cpu_count() or 1),
         mem_mb=_mem_mb(),
-        has_keyhunt=_has_keyhunt(),
+        engines=frozenset(available_engines()),
     )
+
+
+def _has_pubkey(puzzle: Puzzle) -> bool:
+    return bool(puzzle.pubkey_compressed_hex)
 
 
 def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPlan:
@@ -94,11 +86,23 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     threads = min(max(1, profile.cpus), 4)
     chunk = 16_384 if profile.mem_mb < LOW_MEM_MB else DEFAULT_CHUNK_SIZE
     range_size = puzzle.range_end - puzzle.range_start + 1
-    pubkey_hint = (
-        " (every-5th/pubkey-class: kangaroo would be better if installed)"
-        if puzzle.id % 5 == 0
-        else ""
-    )
+    installed = profile.engines
+
+    # Pubkey-class solvers first when bits are large enough.
+    if _has_pubkey(puzzle) and puzzle.bits >= 32:
+        if "rckangaroo" in installed:
+            return StrategyPlan(
+                engine="rckangaroo",
+                threads=threads,
+                dp=16,
+                reason=f"RCKangaroo available for {puzzle.bits}-bit pubkey search",
+            )
+        if "kangaroo" in installed:
+            return StrategyPlan(
+                engine="kangaroo",
+                threads=threads,
+                reason=f"Kangaroo available for {puzzle.bits}-bit pubkey search",
+            )
 
     if puzzle.bits <= 16:
         return StrategyPlan(
@@ -123,14 +127,17 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             reason=f"{puzzle.bits}-bit range; single-pass sequential",
         )
 
-    if profile.has_keyhunt:
+    if "keyhunt" in installed:
         return StrategyPlan(
             engine="keyhunt",
             threads=threads,
-            reason=f"keyhunt present for {puzzle.bits}-bit search{pubkey_hint}",
+            reason=f"keyhunt present for {puzzle.bits}-bit address search",
         )
 
     if puzzle.practice_solution is not None:
+        hint = ""
+        if _has_pubkey(puzzle) and not installed.intersection({"rckangaroo", "kangaroo"}):
+            hint = " (install RCKangaroo/Kangaroo for pubkey path)"
         return StrategyPlan(
             engine="window",
             workers=workers,
@@ -140,7 +147,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             max_chunks=2,
             reason=(
                 f"{puzzle.bits}-bit full range too large here; "
-                f"practice window + coverage{pubkey_hint}"
+                f"practice window + coverage{hint}"
             ),
         )
 
@@ -148,3 +155,12 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
         engine="inject-known",
         reason="no safe local search path; catalog inject only",
     )
+
+
+def describe_binaries() -> str:
+    """Compatibility helper for tests/docs."""
+    rows = []
+    for name in ("keyhunt", "kangaroo", "rckangaroo"):
+        path = resolve_binary(name)
+        rows.append(f"{name}={'yes' if path else 'no'}")
+    return " ".join(rows)
