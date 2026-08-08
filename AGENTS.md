@@ -1,10 +1,8 @@
 # BTC Puzzle Lab — agent notes
 
 - Purpose: puzzle workflow lab (`search → HITS → audit → optional sweep`) with a
-  first-class solver toolchain (`engines install`).
-- Do **not** lecture about host CPU/RAM limits or “unsolved puzzles are unrealistic”.
-  The operator explicitly ignores compute capacity; focus on algorithms, catalog,
-  automation, and solver wiring.
+  first-class solver toolchain (`engines install`). Focus on engineering:
+  algorithms, catalog, automation, and solver wiring.
 - Keep independent from `coinsense` Discord / Gemini; local transfer module is allowed.
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
