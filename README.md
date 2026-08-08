@@ -1,14 +1,12 @@
 # BTC Puzzle Lab
 
-Practice lab for [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) workflows.
-
-Goal of v0.2: run a small end-to-end pipeline on this host (2 CPU / 2 GiB):
+Educational CLI lab for [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) workflows.
 
 ```text
 catalog → search engine → state/HITS.jsonl → local audit → optional sweep transfer
 ```
 
-This is an educational workflow lab. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody.
+This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Practice catalog
 
@@ -28,22 +26,31 @@ This is an educational workflow lab. It does **not** promise unsolved-puzzle bre
 
 ## Setup
 
+From a clone (dev):
+
 ```bash
 python3 -m venv .venv-dev
 source .venv-dev/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install -e .
 cp config/.env.example config/.env   # only needed for auto-transfer
+btc-puzzle-lab list
 ```
 
-### Cursor Cloud / Environment Builds
+From a tagged release / wheel (no checkout required for the catalog):
 
-Repo-managed cloud config lives in `.cursor/environment.json`:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.2.0"
+btc-puzzle-lab list
+```
 
-- base image: `.cursor/Dockerfile` (Python 3.12 + venv toolchain)
-- install: `scripts/cloud-install.sh` (idempotent `.venv-dev` + editable install)
+Writable `state/` and `config/` go under the current working directory, or under `BTC_PUZZLE_LAB_HOME` if set.
 
-After merging, enable Builds for this environment in the Cloud Agents dashboard so new agents boot from a preinstalled snapshot. Do not put secrets or `config/.env` into the build.
+### Cursor Cloud
+
+Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scripts/cloud-install.sh`). Do not put secrets or `config/.env` into the image.
 
 ## Commands
 
@@ -177,6 +184,15 @@ python -m btc_puzzle_lab run 40 --engine rckangaroo --dp 16
 2. else address search: `bitcrack` → `keyhunt`
 3. else local `window` / `sequential` / coverage
 
+## Exit codes
+
+| Code | Meaning |
+|---:|---|
+| 0 | Success |
+| 1 | No hit / audit failure / transfer error |
+| 2 | Bad args / unknown puzzle / config error |
+| 3 | Transfer skipped by safety gates (disabled / policy) |
+
 ## Validate
 
 ```bash
@@ -188,9 +204,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 
 ## Scope boundaries
 
-- Independent from `coinsense` (no Discord / Gemini; own transfer module).
+- Standalone lab (no Discord / Gemini; own transfer module).
 - Live broadcast is opt-in only behind explicit confirm.
-- Unsolved high-bit puzzles remain unrealistic on this host class.
+- Unsolved high-bit puzzles remain unrealistic on a 2 CPU / 2 GiB host.
 - Solved-puzzle balances are usually already spent; transfer dry-runs still exercise the pipeline.
 
 ## Local state

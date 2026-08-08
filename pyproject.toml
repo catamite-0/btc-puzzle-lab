@@ -1,9 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "btc-puzzle-lab"
 version = "0.2.0"
 description = "Practice lab for solved Bitcoin Puzzle Transaction entries: search → HITS → audit → optional sweep"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
+keywords = ["bitcoin", "puzzle", "educational", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Security :: Cryptography",
+]
 dependencies = [
     "base58==2.1.1",
     "cryptography==46.0.5",
@@ -17,8 +33,20 @@ dev = [
     "ruff>=0.9,<1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/catamitez0-maker/btc-puzzle-lab"
+Repository = "https://github.com/catamitez0-maker/btc-puzzle-lab"
+Issues = "https://github.com/catamitez0-maker/btc-puzzle-lab/issues"
+Changelog = "https://github.com/catamitez0-maker/btc-puzzle-lab/blob/main/CHANGELOG.md"
+
 [project.scripts]
 btc-puzzle-lab = "btc_puzzle_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+btc_puzzle_lab = ["data/puzzles.json", "data/env.example"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
