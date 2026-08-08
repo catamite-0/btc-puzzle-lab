@@ -10,3 +10,5 @@
   CLI may show keys only with explicit `--show-key`.
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
+- Cloud Agent bootstrap: `.cursor/environment.json` + `scripts/cloud-install.sh`
+  (idempotent venv/deps). Do not bake `config/.env` or `state/` into builds.
