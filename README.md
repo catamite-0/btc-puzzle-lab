@@ -184,6 +184,8 @@ python -m ruff check src tests
 python -m pytest
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and PRs to `main`.
+
 ## Scope boundaries
 
 - Independent from `coinsense` (no Discord / Gemini; own transfer module).
