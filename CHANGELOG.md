@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- `import-catalog` to load the full 160-puzzle Bitcoin Puzzle Transaction list
+  from the bundled CSV snapshot (or `--url` / `--from-csv`)
+
 ## [0.2.0] — 2026-08-08
 
 ### Added

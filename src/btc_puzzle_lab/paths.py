@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 
@@ -12,7 +11,6 @@ def _is_checkout_root(path: Path) -> bool:
     ).is_dir()
 
 
-@lru_cache(maxsize=1)
 def workspace_root() -> Path:
     """Writable lab home for state/ and config/.
 
@@ -33,8 +31,8 @@ def workspace_root() -> Path:
 
 
 def clear_path_cache() -> None:
-    """Test helper after changing BTC_PUZZLE_LAB_HOME or cwd."""
-    workspace_root.cache_clear()
+    """Compatibility no-op (workspace_root is resolved on each call)."""
+    return None
 
 
 class _LazyPath:

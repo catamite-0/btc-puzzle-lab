@@ -161,9 +161,24 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             ),
         )
 
+    # Algorithm-first fallback for unsolved / no-binary hosts: name the preferred
+    # engine class even when the binary is not installed yet.
+    if _has_pubkey(puzzle) and puzzle.bits >= 32:
+        return StrategyPlan(
+            engine="rckangaroo",
+            threads=threads,
+            dp=16,
+            reason=(
+                f"{puzzle.bits}-bit pubkey puzzle; prefer RCKangaroo/Kangaroo "
+                "(set RCKANGAROO_PATH or KANGAROO_PATH)"
+            ),
+        )
     return StrategyPlan(
-        engine="inject-known",
-        reason="no safe local search path; catalog inject only",
+        engine="bitcrack",
+        reason=(
+            f"{puzzle.bits}-bit address puzzle; prefer BitCrack/keyhunt "
+            "(set BITCRACK_PATH or KEYHUNT_PATH)"
+        ),
     )
 
 
