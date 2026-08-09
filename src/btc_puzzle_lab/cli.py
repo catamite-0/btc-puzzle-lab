@@ -459,6 +459,7 @@ def cmd_once(args: argparse.Namespace) -> int:
         audit=not args.no_audit,
         check_balance=args.balance,
         transfer=not args.no_transfer,
+        notify=not args.no_notify,
         progress=not args.no_progress,
         timeout=_loop_timeout(args),
     )
@@ -487,6 +488,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         audit=not args.no_audit,
         check_balance=args.balance,
         transfer=not args.no_transfer,
+        notify=not args.no_notify,
         progress=not args.no_progress,
     )
     print(format_watch_result(result))
@@ -880,6 +882,11 @@ def build_parser() -> argparse.ArgumentParser:
             "--no-transfer",
             action="store_true",
             help="skip sweep attempt (still records hits)",
+        )
+        parser.add_argument(
+            "--no-notify",
+            action="store_true",
+            help="skip hit webhook/Telegram notify (NOTIFY_* in config/.env)",
         )
         parser.add_argument(
             "--no-progress",

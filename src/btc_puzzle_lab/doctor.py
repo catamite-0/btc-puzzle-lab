@@ -9,7 +9,13 @@ from pathlib import Path
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.engines import available_engines, format_engine_status, resolve_binary
 from btc_puzzle_lab.paths import CONFIG_DIR, STATE_DIR, workspace_root
-from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+from btc_puzzle_lab.settings import (
+    format_notify_policy,
+    get_notify_settings,
+    get_transfer_settings,
+    validate_notify_settings,
+    validate_transfer_settings,
+)
 from btc_puzzle_lab.strategy import probe_host
 from btc_puzzle_lab.toolchain import (
     cuda_available,
@@ -130,6 +136,21 @@ def run_doctor() -> list[Check]:
         )
     except ValueError as exc:
         checks.append(Check("transfer_policy", False, str(exc)))
+
+    try:
+        notify = get_notify_settings()
+        notify_errors = validate_notify_settings(notify)
+        checks.append(
+            Check(
+                "notify_policy",
+                not notify_errors,
+                format_notify_policy(notify)
+                if not notify_errors
+                else "; ".join(notify_errors),
+            )
+        )
+    except ValueError as exc:
+        checks.append(Check("notify_policy", False, str(exc)))
 
     catalog = root / "data" / "puzzles.json"
     checks.append(

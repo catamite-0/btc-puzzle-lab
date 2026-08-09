@@ -25,6 +25,7 @@ from btc_puzzle_lab.catalog_import import ImportResult, import_catalog
 from btc_puzzle_lab.doctor import doctor_ok, run_doctor
 from btc_puzzle_lab.engines import resolve_binary
 from btc_puzzle_lab.hits import Hit, read_hits
+from btc_puzzle_lab.notify import NotifyResult, format_notify_results, notify_hit
 from btc_puzzle_lab.runlog import log_event
 from btc_puzzle_lab.strategy import HostProfile, probe_host
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit
@@ -42,6 +43,7 @@ class LoopResult:
     batch: BatchRunResult | None
     audits: list[AuditResult] = field(default_factory=list)
     transfers: list[TransferResult] = field(default_factory=list)
+    notifications: list[NotifyResult] = field(default_factory=list)
     message: str = ""
 
     @property
@@ -105,6 +107,7 @@ def run_once(
     audit: bool = True,
     check_balance: bool = False,
     transfer: bool = True,
+    notify: bool = True,
     progress: bool = True,
     timeout: float | None = None,
     plan_path: Path | None = None,
@@ -191,6 +194,7 @@ def run_once(
 
     audits: list[AuditResult] = []
     transfers: list[TransferResult] = []
+    notifications: list[NotifyResult] = []
     new_hit_ids = {
         hit.puzzle_id
         for hit in read_hits()
@@ -200,35 +204,49 @@ def run_once(
         for job in plan.jobs
         if job.puzzle_id in focus and job.job_status == "hit"
     }
-    if audit and new_hit_ids:
+    transfer_by_id: dict[int, TransferResult] = {}
+    if new_hit_ids:
         for hit in _hits_for_ids(new_hit_ids):
-            result = verify_hit(hit)
-            if check_balance and result.address_ok and not result.error:
-                try:
-                    balance = fetch_balance_sats(hit.address)
-                    result = AuditResult(
-                        hit=result.hit,
-                        address_ok=result.address_ok,
-                        derived_address=result.derived_address,
-                        balance_sats=balance,
-                        addr_type=result.addr_type,
+            result: AuditResult | None = None
+            if audit:
+                result = verify_hit(hit)
+                if check_balance and result.address_ok and not result.error:
+                    try:
+                        balance = fetch_balance_sats(hit.address)
+                        result = AuditResult(
+                            hit=result.hit,
+                            address_ok=result.address_ok,
+                            derived_address=result.derived_address,
+                            balance_sats=balance,
+                            addr_type=result.addr_type,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — surface in audit row
+                        result = AuditResult(
+                            hit=result.hit,
+                            address_ok=result.address_ok,
+                            derived_address=result.derived_address,
+                            balance_sats=None,
+                            error=f"balance lookup failed: {exc}",
+                            addr_type=result.addr_type,
+                        )
+                audits.append(result)
+                if transfer and result.address_ok and not result.error:
+                    tr = sweep_hit(hit)
+                    transfers.append(tr)
+                    transfer_by_id[hit.puzzle_id] = tr
+            if notify:
+                notifications.extend(
+                    notify_hit(
+                        hit,
+                        audit=result,
+                        transfer=transfer_by_id.get(hit.puzzle_id),
                     )
-                except Exception as exc:  # noqa: BLE001 — surface in audit row
-                    result = AuditResult(
-                        hit=result.hit,
-                        address_ok=result.address_ok,
-                        derived_address=result.derived_address,
-                        balance_sats=None,
-                        error=f"balance lookup failed: {exc}",
-                        addr_type=result.addr_type,
-                    )
-            audits.append(result)
-            if transfer and result.address_ok and not result.error:
-                transfers.append(sweep_hit(hit))
+                )
 
     message = (
         f"selected={selected_ids} attempted={batch_result.attempted} "
-        f"hits={batch_result.hits} audits={len(audits)} transfers={len(transfers)}"
+        f"hits={batch_result.hits} audits={len(audits)} transfers={len(transfers)} "
+        f"notifications={len(notifications)}"
     )
     log_event(
         "loop_complete",
@@ -237,6 +255,7 @@ def run_once(
         hits=batch_result.hits,
         audits=len(audits),
         transfers=len(transfers),
+        notifications=len(notifications),
     )
     return LoopResult(
         host_tier=profile.tier,
@@ -247,6 +266,7 @@ def run_once(
         batch=batch_result,
         audits=audits,
         transfers=transfers,
+        notifications=notifications,
         message=message,
     )
 
@@ -275,6 +295,8 @@ def format_loop_result(result: LoopResult) -> str:
         lines.append(f"audit[{mark}] puzzle={item.hit.puzzle_id}{bal}{err}")
     for item in result.transfers:
         lines.append(f"transfer[{item.status}]: {item.message}")
+    if result.notifications:
+        lines.append(format_notify_results(result.notifications))
     lines.append(result.message)
     return "\n".join(lines)
 
@@ -307,6 +329,7 @@ def run_watch(
     audit: bool = True,
     check_balance: bool = False,
     transfer: bool = True,
+    notify: bool = True,
     progress: bool = True,
     plan_path: Path | None = None,
     host: HostProfile | None = None,
@@ -356,6 +379,7 @@ def run_watch(
             audit=audit,
             check_balance=check_balance,
             transfer=transfer,
+            notify=notify,
             progress=progress,
             timeout=pass_timeout,
             plan_path=plan_path,

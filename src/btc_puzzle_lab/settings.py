@@ -49,6 +49,20 @@ class TransferSettings:
         return self.live_confirm == LIVE_CONFIRM_PHRASE
 
 
+@dataclass(frozen=True)
+class NotifySettings:
+    enabled: bool
+    webhook_url: str
+    telegram_bot_token: str
+    telegram_chat_id: str
+
+    @property
+    def configured(self) -> bool:
+        if self.webhook_url:
+            return True
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+
 def load_dotenv_files() -> None:
     # Optional local config; never required for search/audit-only use.
     engines_env = REPO_ROOT / "config" / "engines.env"
@@ -102,6 +116,47 @@ def validate_transfer_settings(settings: TransferSettings) -> list[str]:
             f"{LIVE_CONFIRM_PHRASE}"
         )
     return errors
+
+
+def get_notify_settings() -> NotifySettings:
+    load_dotenv_files()
+    return NotifySettings(
+        enabled=_env_bool("NOTIFY_ENABLED", False),
+        webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
+        telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
+        telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
+    )
+
+
+def validate_notify_settings(settings: NotifySettings) -> list[str]:
+    errors: list[str] = []
+    if not settings.enabled:
+        return errors
+    if not settings.configured:
+        errors.append(
+            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL nor "
+            "NOTIFY_TELEGRAM_BOT_TOKEN+NOTIFY_TELEGRAM_CHAT_ID is set"
+        )
+    if settings.webhook_url:
+        parsed = settings.webhook_url.lower()
+        if not (parsed.startswith("https://") or parsed.startswith("http://")):
+            errors.append("NOTIFY_WEBHOOK_URL must be an http(s) URL")
+    if settings.telegram_bot_token and not settings.telegram_chat_id:
+        errors.append("NOTIFY_TELEGRAM_BOT_TOKEN set but NOTIFY_TELEGRAM_CHAT_ID empty")
+    if settings.telegram_chat_id and not settings.telegram_bot_token:
+        errors.append("NOTIFY_TELEGRAM_CHAT_ID set but NOTIFY_TELEGRAM_BOT_TOKEN empty")
+    return errors
+
+
+def format_notify_policy(settings: NotifySettings | None = None) -> str:
+    cfg = settings or get_notify_settings()
+    channels: list[str] = []
+    if cfg.webhook_url:
+        channels.append("webhook")
+    if cfg.telegram_bot_token and cfg.telegram_chat_id:
+        channels.append("telegram")
+    ch = ",".join(channels) if channels else "(none)"
+    return f"enabled={cfg.enabled} channels={ch}"
 
 
 def ensure_config_dir() -> Path:

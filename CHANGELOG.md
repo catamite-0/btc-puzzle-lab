@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- Hit notifications via `NOTIFY_WEBHOOK_URL` and/or Telegram (`NOTIFY_TELEGRAM_*`)
+- `once` / `watch` auto-notify on hit; `--no-notify` to skip; never ships private keys
+
 ## [0.5.0] — 2026-08-09
 
 Full-loop orchestrator for VPS hosts (CPU/GPU resource slots).
