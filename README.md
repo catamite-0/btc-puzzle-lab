@@ -192,6 +192,8 @@ Checkpoints, coverage ledgers, and structured events never store private keys.
 
 ## Auto-transfer safety gates
 
+Post-hit ops runbook: [docs/TRANSFER.md](docs/TRANSFER.md).
+
 Configured via `config/.env` (see `config/.env.example`):
 
 | Gate | Default | Meaning |

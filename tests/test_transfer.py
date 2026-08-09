@@ -24,6 +24,7 @@ from btc_puzzle_lab.transfer import (
     legacy_sighash,
     select_utxos_for_sweep,
     sweep_hit,
+    tx_vsize,
     verify_dry_run_file,
 )
 
@@ -41,6 +42,8 @@ def _settings(**overrides) -> TransferSettings:
         fee_strategy="normal",
         fee_target_blocks=2,
         rbf=True,
+        confirmed_only=True,
+        max_fee_sats=100_000,
     )
     base.update(overrides)
     return TransferSettings(**base)
@@ -152,7 +155,7 @@ def test_uncompressed_and_segwit_signing():
         compressed=False,
         rbf=False,
     )
-    assert fee_u == 2240
+    assert fee_u == tx_vsize(tx_u) * 10
     assert uncompressed_pubkey(pk).hex() in tx_u
     assert send_u + fee_u == 1_000_000
 
@@ -241,15 +244,97 @@ def test_sweep_dry_run_verify_and_gates(tmp_path: Path, monkeypatch):
     assert path.read_text(encoding="utf-8").strip()
 
     with patch.object(transfer_mod, "broadcast_tx", return_value="txid-demo") as broadcast:
-        live = sweep_hit(
-            hit,
-            settings=_settings(
-                dry_run=False,
-                live_confirm="I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC",
-            ),
-            utxos=utxos,
-            fee_rate=10,
-        )
-        assert live.status == "broadcast"
-        assert live.txid == "txid-demo"
-        broadcast.assert_called_once()
+        with patch.object(transfer_mod, "get_tx_status", return_value="mempool"):
+            live = sweep_hit(
+                hit,
+                settings=_settings(
+                    dry_run=False,
+                    live_confirm="I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC",
+                ),
+                utxos=utxos,
+                fee_rate=10,
+            )
+            assert live.status == "broadcast"
+            assert live.txid == "txid-demo"
+            assert live.chain_status == "mempool"
+            broadcast.assert_called_once()
+
+
+def test_confirmed_only_filters_unconfirmed():
+    utxos = [
+        {
+            "txid": "aa" * 32,
+            "vout": 0,
+            "value": 100_000,
+            "status": {"confirmed": False},
+        },
+        {
+            "txid": "bb" * 32,
+            "vout": 1,
+            "value": 200_000,
+            "status": {"confirmed": True},
+        },
+    ]
+    selected = select_utxos_for_sweep(utxos, confirmed_only=True)
+    assert [u["value"] for u in selected] == [200_000]
+    assert len(select_utxos_for_sweep(utxos, confirmed_only=False)) == 2
+
+
+def test_verify_checks_dest_and_vsize(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(transfer_mod, "STATE_DIR", tmp_path)
+    pk_hex = "00" * 31 + "02"
+    pk = bytes.fromhex(pk_hex)
+    addr = privkey_to_p2pkh_address(pk)
+    dest = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH"
+    hit = Hit(
+        puzzle_id=20,
+        address=addr,
+        private_key_hex=pk_hex,
+        engine="test",
+        found_at="2026-01-01T00:00:00Z",
+        verified=True,
+    )
+    utxos = [{
+        "txid": "e1e9f1a2384f9de1a86c67341e8c71d604b7b39a3ea3ef5d22ea6c3fcaef0b33",
+        "vout": 1,
+        "value": 1_000_000,
+    }]
+    dry = sweep_hit(hit, settings=_settings(dest_addr=dest), utxos=utxos, fee_rate=10)
+    assert dry.status == "dry_run"
+    assert dry.vsize == tx_vsize(Path(dry.dry_run_path).read_text(encoding="utf-8").strip())
+    ok = verify_dry_run_file(dry.dry_run_path, expected_dest=dest, min_send_sats=546)
+    assert ok.ok is True
+    assert ok.dest_addr == dest
+    bad = verify_dry_run_file(
+        dry.dry_run_path,
+        expected_dest="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+    )
+    assert bad.ok is False
+
+
+def test_max_fee_sats_gate(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(transfer_mod, "STATE_DIR", tmp_path)
+    pk_hex = "00" * 31 + "02"
+    pk = bytes.fromhex(pk_hex)
+    addr = privkey_to_p2pkh_address(pk)
+    hit = Hit(
+        puzzle_id=20,
+        address=addr,
+        private_key_hex=pk_hex,
+        engine="test",
+        found_at="2026-01-01T00:00:00Z",
+        verified=True,
+    )
+    utxos = [{
+        "txid": "e1e9f1a2384f9de1a86c67341e8c71d604b7b39a3ea3ef5d22ea6c3fcaef0b33",
+        "vout": 1,
+        "value": 1_000_000,
+    }]
+    result = sweep_hit(
+        hit,
+        settings=_settings(max_fee_sats=100),
+        utxos=utxos,
+        fee_rate=10,
+    )
+    assert result.status == "skipped"
+    assert "MAX_FEE_SATS" in result.message

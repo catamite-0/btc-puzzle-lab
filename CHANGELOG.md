@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- Transfer landing: confirmed-only UTXOs, fee-from-signed-vsize, `MAX_FEE_SATS`,
+  enriched dry-run verify (dest/amount), post-broadcast chain status,
+  `transfer --broadcast-dry-run` / `--fee-rate` / `--allow-unconfirmed`,
+  and `docs/TRANSFER.md` runbook
+- UTXO/fee explorer failover (Blockstream ↔ mempool.space)
+
 ### Changed
 - Agent notes keep engineering focus only (algorithms, catalog, toolchain)
 
