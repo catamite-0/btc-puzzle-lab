@@ -10,6 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # GitHub-hosted runners are for lint/unit tests only, never keyspace search.
+      BTC_PUZZLE_LAB_GPU: "0"
 
     steps:
       - name: Checkout

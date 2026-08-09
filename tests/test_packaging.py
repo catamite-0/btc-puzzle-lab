@@ -17,6 +17,45 @@ def test_version_matches_pyproject():
     assert re.search(rf"^## \[{re.escape(__version__)}\]", changelog, flags=re.M)
 
 
+def test_project_urls_use_canonical_repository():
+    root = Path(__file__).resolve().parents[1]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    canonical = "https://github.com/catamite-0/btc-puzzle-lab"
+    urls = data["project"]["urls"]
+    assert urls["Homepage"] == canonical
+    assert urls["Repository"] == canonical
+    assert urls["Issues"] == f"{canonical}/issues"
+    assert urls["Changelog"] == f"{canonical}/blob/main/CHANGELOG.md"
+
+    for relative in ("README.md", "docs/MACHINE.md", "pyproject.toml"):
+        text = (root / relative).read_text(encoding="utf-8")
+        assert "catamitez0-maker/btc-puzzle-lab" not in text
+
+
+def test_github_workflows_never_run_search_workloads():
+    root = Path(__file__).resolve().parents[1]
+    workflow_dir = root / ".github" / "workflows"
+    workflows = "\n".join(
+        path.read_text(encoding="utf-8").lower()
+        for path in sorted(workflow_dir.glob("*.yml"))
+    )
+    forbidden = (
+        "machine-bootstrap",
+        "engines install",
+        "btc-puzzle-lab once",
+        "btc-puzzle-lab watch",
+        "--engine bitcrack",
+        "nvidia-smi",
+    )
+    for command in forbidden:
+        assert command not in workflows
+
+    ci = (workflow_dir / "ci.yml").read_text(encoding="utf-8")
+    assert "timeout-minutes: 15" in ci
+    assert "contents: read" in ci
+    assert 'BTC_PUZZLE_LAB_GPU: "0"' in ci
+
+
 def test_packaged_catalog_readable():
     text = files("btc_puzzle_lab").joinpath("data/puzzles.json").read_text(encoding="utf-8")
     assert '"puzzles"' in text

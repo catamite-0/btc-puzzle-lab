@@ -17,15 +17,30 @@ from pathlib import Path
 
 from btc_puzzle_lab.paths import workspace_root
 
-# Pinned default remotes (override via BTC_PUZZLE_LAB_*_REPO env if needed).
-KEYHUNT_REPO = os.environ.get(
-    "BTC_PUZZLE_LAB_KEYHUNT_REPO", "https://github.com/albertobsd/keyhunt.git"
+# Reproducible default sources. Override REPO and REF together for a fork.
+_KEYHUNT_REPO = "https://github.com/albertobsd/keyhunt.git"
+_KANGAROO_REPO = "https://github.com/JeanLucPons/Kangaroo.git"
+_BITCRACK_REPO = "https://github.com/brichard19/BitCrack.git"
+
+KEYHUNT_REPO = os.environ.get("BTC_PUZZLE_LAB_KEYHUNT_REPO", _KEYHUNT_REPO)
+KANGAROO_REPO = os.environ.get("BTC_PUZZLE_LAB_KANGAROO_REPO", _KANGAROO_REPO)
+BITCRACK_REPO = os.environ.get("BTC_PUZZLE_LAB_BITCRACK_REPO", _BITCRACK_REPO)
+
+KEYHUNT_REF = os.environ.get(
+    "BTC_PUZZLE_LAB_KEYHUNT_REF",
+    "2134a2024e524775b13f82aa1fa07b1c8053f867" if KEYHUNT_REPO == _KEYHUNT_REPO else "HEAD",
 )
-KANGAROO_REPO = os.environ.get(
-    "BTC_PUZZLE_LAB_KANGAROO_REPO", "https://github.com/JeanLucPons/Kangaroo.git"
+KANGAROO_REF = os.environ.get(
+    "BTC_PUZZLE_LAB_KANGAROO_REF",
+    "37576c82d198c20fca65b14da74138ae6153a446"
+    if KANGAROO_REPO == _KANGAROO_REPO
+    else "HEAD",
 )
-BITCRACK_REPO = os.environ.get(
-    "BTC_PUZZLE_LAB_BITCRACK_REPO", "https://github.com/brichard19/BitCrack.git"
+BITCRACK_REF = os.environ.get(
+    "BTC_PUZZLE_LAB_BITCRACK_REF",
+    "6bf8059ef075eb1622298395866b0bd02375e1d9"
+    if BITCRACK_REPO == _BITCRACK_REPO
+    else "HEAD",
 )
 
 INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack")
@@ -153,18 +168,37 @@ def default_install_names() -> list[str]:
     return names
 
 
-def _clone_or_update(repo: str, dest: Path) -> None:
+def _clone_or_update(repo: str, dest: Path, ref: str) -> str:
+    """Fetch and check out exactly ``ref`` so solver builds are reproducible."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if (dest / ".git").is_dir():
-        code, out = _run(["git", "-C", str(dest), "pull", "--ff-only"])
+        code, out = _run(["git", "-C", str(dest), "remote", "set-url", "origin", repo])
         if code != 0:
-            raise RuntimeError(f"git pull failed for {dest}: {out}")
-        return
-    if dest.exists():
-        shutil.rmtree(dest)
-    code, out = _run(["git", "clone", "--depth", "1", repo, str(dest)])
+            raise RuntimeError(f"git remote update failed for {dest}: {out}")
+    else:
+        if dest.exists():
+            shutil.rmtree(dest)
+        code, out = _run(["git", "clone", "--filter=blob:none", "--no-checkout", repo, str(dest)])
+        if code != 0:
+            raise RuntimeError(f"git clone failed for {repo}: {out}")
+
+    code, out = _run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref])
     if code != 0:
-        raise RuntimeError(f"git clone failed for {repo}: {out}")
+        raise RuntimeError(f"git fetch failed for {repo}@{ref}: {out}")
+    code, out = _run(["git", "-C", str(dest), "checkout", "--force", "--detach", "FETCH_HEAD"])
+    if code != 0:
+        raise RuntimeError(f"git checkout failed for {repo}@{ref}: {out}")
+
+    code, resolved = _run(["git", "-C", str(dest), "rev-parse", "HEAD"])
+    resolved = resolved.strip()
+    if code != 0 or not resolved:
+        raise RuntimeError(f"git rev-parse failed for {repo}@{ref}: {resolved}")
+    if len(ref) == 40 and all(char in "0123456789abcdefABCDEF" for char in ref):
+        if resolved.lower() != ref.lower():
+            raise RuntimeError(
+                f"source verification failed for {repo}: expected {ref}, got {resolved}"
+            )
+    return resolved
 
 
 def _install_link(src: Path, name: str) -> Path:
@@ -220,7 +254,7 @@ def install_keyhunt(*, force: bool = False) -> InstallResult:
         return InstallResult("keyhunt", True, dest_bin.resolve(), "already installed")
 
     src_dir = vendor_dir() / "keyhunt"
-    _clone_or_update(KEYHUNT_REPO, src_dir)
+    _clone_or_update(KEYHUNT_REPO, src_dir, KEYHUNT_REF)
     code, out = _run(["make"], cwd=src_dir)
     built = src_dir / "keyhunt"
     if code != 0 or not built.is_file():
@@ -259,7 +293,7 @@ def install_kangaroo(*, force: bool = False) -> InstallResult:
         return InstallResult("kangaroo", True, dest_bin.resolve(), "already installed")
 
     src_dir = vendor_dir() / "Kangaroo"
-    _clone_or_update(KANGAROO_REPO, src_dir)
+    _clone_or_update(KANGAROO_REPO, src_dir, KANGAROO_REF)
     _patch_kangaroo_sources(src_dir)
     # CPU build (no CUDA). GPU operators can rebuild upstream with gpu=1 themselves.
     code, out = _run(["make", "clean"], cwd=src_dir)
@@ -323,7 +357,7 @@ def install_bitcrack(*, force: bool = False) -> InstallResult:
         )
 
     src_dir = vendor_dir() / "BitCrack"
-    _clone_or_update(BITCRACK_REPO, src_dir)
+    _clone_or_update(BITCRACK_REPO, src_dir, BITCRACK_REF)
     compute_cap = detect_compute_cap()
     _patch_bitcrack_makefile(src_dir, cuda_home=cuda_home, compute_cap=compute_cap)
     _run(["make", "clean"], cwd=src_dir)

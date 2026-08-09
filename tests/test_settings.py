@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from btc_puzzle_lab.paths import clear_path_cache
@@ -58,3 +60,19 @@ def test_fee_rate_bounds(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_TRANSFER_MAX_FEE_RATE", "250")
     with pytest.raises(ValueError, match="DEFAULT_FEE_RATE"):
         get_transfer_settings()
+
+
+def test_dotenv_credentials_do_not_mutate_process_environment(monkeypatch, tmp_path):
+    _isolate_home(monkeypatch, tmp_path)
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / ".env").write_text(
+        "AUTO_TRANSFER_ENABLED=true\n"
+        "NOTIFY_TELEGRAM_BOT_TOKEN=file-secret-token\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("NOTIFY_TELEGRAM_BOT_TOKEN", raising=False)
+
+    settings = get_transfer_settings()
+    assert settings.enabled is True
+    assert "NOTIFY_TELEGRAM_BOT_TOKEN" not in os.environ

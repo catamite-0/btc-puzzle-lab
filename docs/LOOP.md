@@ -13,11 +13,13 @@ This is the product path. It is **not** the public btcpuzzle.info pool client.
 
 ```bash
 btc-puzzle-lab once
-# typical 5090 focus (holds GPU until BitCrack exits / you Ctrl-C):
-btc-puzzle-lab once --ids 71 --resource gpu
+# bounded 4090/5090 benchmark:
+btc-puzzle-lab once --ids 71 --resource gpu --max-seconds 300 \
+  --no-transfer --no-notify --no-progress
 
-# budgeted VPS session (stops solvers at the wall clock):
-btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6
+# budgeted VPS session (stops the solver, not the cloud Pod):
+btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6 \
+  --no-transfer --no-notify --no-progress
 ```
 
 Defaults for `once` / `watch`:
@@ -35,6 +37,9 @@ Defaults for `once` / `watch`:
 | `--max-seconds` | off | SIGTERM external solver after N seconds |
 
 `watch` extras: `--max-hours`, `--max-passes`, `--idle-sleep`, `--sync-every`.
+Always pair process budgets with a provider-side Pod stop deadline. The bundled
+catalog is a snapshot, so independently verify an unsolved target's live status
+before starting a paid run.
 
 ## Resource model
 
@@ -73,7 +78,9 @@ Payload includes puzzle id, address, engine, audit/transfer status only.
 
 External solvers now stream redacted logs (no full stdout buffering) and honor
 `--max-seconds` / `watch --max-hours`. Private-key lines are redacted in the
-console; hits still land in ignored `state/HITS.jsonl`.
+console; hits still land in ignored `state/HITS.jsonl`. BitCrack writes its
+restart cursor to persistent `state/bitcrack_<id>.continue`; test forced-stop
+resume behavior before considering Spot capacity.
 
 ## Related
 

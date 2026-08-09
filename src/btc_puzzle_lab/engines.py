@@ -29,6 +29,27 @@ _HEX_KEY = re.compile(r"\b(0x)?([0-9a-fA-F]{1,64})\b")
 _PRIVATE_KEY_LINE_RE = re.compile(
     r"(?i)((?:private\s*key|privkey|priv)\s*:?\s*)(?:0x)?[0-9a-f]{1,64}"
 )
+_BARE_SECRET_RE = re.compile(r"(?i)\b(?:0x)?[0-9a-f]{64}\b")
+_SOLVER_ENV_ALLOWLIST = {
+    "COMSPEC",
+    "CUDA_HOME",
+    "CUDA_PATH",
+    "CUDA_VISIBLE_DEVICES",
+    "GPU_DEVICE_ORDINAL",
+    "HOME",
+    "LANG",
+    "LD_LIBRARY_PATH",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "NVIDIA_VISIBLE_DEVICES",
+    "OMP_NUM_THREADS",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "WINDIR",
+}
 
 
 @dataclass(frozen=True)
@@ -135,7 +156,17 @@ def parse_privkey_text(text: str) -> int | None:
 
 def redact_engine_line(line: str) -> str:
     """Strip plaintext private-key material before printing solver logs."""
-    return _PRIVATE_KEY_LINE_RE.sub(r"\1[REDACTED]", line)
+    line = _PRIVATE_KEY_LINE_RE.sub(r"\1[REDACTED]", line)
+    return _BARE_SECRET_RE.sub("[REDACTED]", line)
+
+
+def _solver_env() -> dict[str, str]:
+    """Minimal runtime environment; never pass app/cloud credentials to solvers."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in _SOLVER_ENV_ALLOWLIST or key.upper().startswith("LC_")
+    }
 
 
 def _append_result_files(cwd: Path, output: str) -> str:
@@ -160,6 +191,7 @@ def _run(
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
+            env=_solver_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -285,6 +317,13 @@ def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str]
 def _cmd_bitcrack(binary: Path, puzzle: Puzzle) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-bc-"))
     out = tmp / "found.txt"
+    state_dir = workspace_root() / "state"
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        state_dir.chmod(0o700)
+    except OSError:
+        pass
+    continue_file = state_dir / f"bitcrack_{puzzle.id}.continue"
     keyspace = f"{puzzle.range_start:x}:{puzzle.range_end:x}"
     cmd = [str(binary), "-c"]
     # Optional device / grid knobs for VPS tuning (safe defaults when unset).
@@ -300,7 +339,15 @@ def _cmd_bitcrack(binary: Path, puzzle: Puzzle) -> tuple[list[str], Path]:
         cmd += ["-t", threads]
     if points.isdigit():
         cmd += ["-p", points]
-    cmd += ["--keyspace", keyspace, "-o", str(out), puzzle.address]
+    cmd += [
+        "--continue",
+        str(continue_file),
+        "--keyspace",
+        keyspace,
+        "-o",
+        str(out),
+        puzzle.address,
+    ]
     return cmd, tmp
 
 

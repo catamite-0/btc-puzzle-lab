@@ -3,6 +3,18 @@
 This repository is an **educational practice lab** for solved Bitcoin Puzzle
 Transaction workflows. It is not a wallet, miner, or custody product.
 
+## Acceptable-use boundary
+
+GitHub is used only to host source, documentation, bounded unit tests, and
+release artifacts. Do not use GitHub Actions, Codespaces, or other GitHub-hosted
+compute for keyspace searches, external solver builds, cryptocurrency mining,
+or sustained workloads. The workflows are intentionally CPU-only and bounded.
+
+Run experiments only on infrastructure you control and pay for, against the
+intentional public Bitcoin Puzzle Transaction challenge. Never target unrelated
+or third-party wallets. This boundary follows the
+[GitHub Acceptable Use Policies](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies).
+
 ## What ships in the catalog
 
 `data/puzzles.json` (also packaged under `btc_puzzle_lab/data/`) includes

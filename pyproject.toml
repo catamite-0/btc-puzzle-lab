@@ -34,10 +34,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/catamitez0-maker/btc-puzzle-lab"
-Repository = "https://github.com/catamitez0-maker/btc-puzzle-lab"
-Issues = "https://github.com/catamitez0-maker/btc-puzzle-lab/issues"
-Changelog = "https://github.com/catamitez0-maker/btc-puzzle-lab/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/catamite-0/btc-puzzle-lab"
+Repository = "https://github.com/catamite-0/btc-puzzle-lab"
+Issues = "https://github.com/catamite-0/btc-puzzle-lab/issues"
+Changelog = "https://github.com/catamite-0/btc-puzzle-lab/blob/main/CHANGELOG.md"
 
 [project.scripts]
 btc-puzzle-lab = "btc_puzzle_lab.cli:main"

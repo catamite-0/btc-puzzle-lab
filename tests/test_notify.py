@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
+import requests
+
 from btc_puzzle_lab.hits import Hit
-from btc_puzzle_lab.notify import build_hit_message, notify_hit
+from btc_puzzle_lab.notify import build_hit_message, notify_hit, send_telegram, send_webhook
 from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.settings import NotifySettings, get_notify_settings, validate_notify_settings
 
@@ -70,3 +72,27 @@ def test_notify_disabled_is_noop(tmp_path, monkeypatch):
     assert results[0].ok is True
     assert "NOTIFY_ENABLED=false" in results[0].message
     post.assert_not_called()
+
+
+def test_network_errors_redact_webhook_and_telegram_credentials():
+    webhook = "https://example.com/hooks/private-secret"
+    with patch(
+        "btc_puzzle_lab.notify.requests.post",
+        side_effect=requests.RequestException(f"failed POST {webhook}"),
+    ):
+        result = send_webhook("hello", url=webhook)
+    assert result.ok is False
+    assert webhook not in result.message
+    assert "[REDACTED]" in result.message
+
+    token = "123456:very-secret-token"
+    telegram_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    with patch(
+        "btc_puzzle_lab.notify.requests.post",
+        side_effect=requests.RequestException(f"failed POST {telegram_url}"),
+    ):
+        result = send_telegram("hello", bot_token=token, chat_id="42")
+    assert result.ok is False
+    assert token not in result.message
+    assert telegram_url not in result.message
+    assert "[REDACTED]" in result.message

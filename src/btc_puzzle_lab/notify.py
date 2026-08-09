@@ -28,6 +28,14 @@ class NotifyResult:
     message: str
 
 
+def _safe_request_error(exc: requests.RequestException, *secrets: str) -> str:
+    """Format a network error without echoing credential-bearing URLs."""
+    message = str(exc)
+    for secret in sorted((value for value in secrets if value), key=len, reverse=True):
+        message = message.replace(secret, "[REDACTED]")
+    return message
+
+
 def build_hit_message(
     hit: Hit,
     *,
@@ -88,7 +96,7 @@ def send_webhook(text: str, *, url: str, timeout: float = 15.0) -> NotifyResult:
             f"http {resp.status_code}: {(resp.text or '')[:200]}",
         )
     except requests.RequestException as exc:
-        return NotifyResult("webhook", False, str(exc))
+        return NotifyResult("webhook", False, _safe_request_error(exc, url))
 
 
 def send_telegram(
@@ -116,7 +124,11 @@ def send_telegram(
             f"http {resp.status_code}: {(resp.text or '')[:200]}",
         )
     except requests.RequestException as exc:
-        return NotifyResult("telegram", False, str(exc))
+        return NotifyResult(
+            "telegram",
+            False,
+            _safe_request_error(exc, api, bot_token),
+        )
 
 
 def notify_hit(

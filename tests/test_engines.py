@@ -3,11 +3,13 @@ from unittest.mock import patch
 
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.engines import (
+    _solver_env,
     parse_privkey_text,
     redact_engine_line,
     resolve_binary,
     run_external_engine,
 )
+from btc_puzzle_lab.paths import clear_path_cache
 
 
 def test_parse_privkey_text_common_formats():
@@ -60,6 +62,8 @@ def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):
 
 
 def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
     puzzle = get_puzzle(40)
     fake = tmp_path / "cuBitCrack"
     fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
@@ -73,12 +77,31 @@ def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):
     assert puzzle.address in result.cmdline
     assert "-c" in result.cmdline
     assert result.cmdline[result.cmdline.index("-d") + 1] == "0"
+    assert "--continue" in result.cmdline
+    continue_file = Path(result.cmdline[result.cmdline.index("--continue") + 1])
+    assert continue_file == tmp_path / "state" / "bitcrack_40.continue"
 
 
 def test_redact_engine_line_hides_private_key():
     line = "Private key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
     assert "0123456789abcdef" not in redact_engine_line(line)
     assert "[REDACTED]" in redact_engine_line(line)
+    bare = "0123456789abcdef" * 4
+    assert bare not in redact_engine_line(f"solver output {bare}\n")
+
+
+def test_solver_environment_excludes_application_and_cloud_secrets(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setenv("NOTIFY_TELEGRAM_BOT_TOKEN", "notify-secret")
+    monkeypatch.setenv("RUNPOD_API_KEY", "runpod-secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
+    env = _solver_env()
+    assert env["PATH"] == "/usr/bin"
+    assert env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert "NOTIFY_TELEGRAM_BOT_TOKEN" not in env
+    assert "RUNPOD_API_KEY" not in env
+    assert "AWS_SECRET_ACCESS_KEY" not in env
 
 
 def test_external_engine_timeout(tmp_path: Path, monkeypatch):

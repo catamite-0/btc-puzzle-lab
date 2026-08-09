@@ -28,6 +28,10 @@ class AppendHitResult:
 
 def ensure_state_dir() -> Path:
     STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(STATE_DIR, 0o700)
+    except OSError:
+        pass
     return STATE_DIR
 
 
@@ -42,11 +46,19 @@ def append_hit(hit: Hit, path: Path | None = None, *, dedupe: bool = True) -> Ap
         for existing in read_hits(target):
             if hit_identity(existing) == hit_identity(hit):
                 return AppendHitResult(path=target, appended=False, duplicate=True)
-    created = not target.exists()
+    if target.exists():
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
     with open(target, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(asdict(hit), sort_keys=True) + "\n")
-    if created:
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
         os.chmod(target, 0o600)
+    except OSError:
+        pass
     return AppendHitResult(path=target, appended=True, duplicate=False)
 
 

@@ -4,12 +4,66 @@ from btc_puzzle_lab.cli import main
 from btc_puzzle_lab.engines import resolve_binary
 from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.toolchain import (
+    BITCRACK_REF,
+    KANGAROO_REF,
+    KEYHUNT_REF,
     InstallResult,
+    _clone_or_update,
     _write_engines_env,
     build_gencode,
     format_install_results,
     install_engines,
 )
+
+
+def test_default_solver_refs_are_full_commit_hashes():
+    for ref in (KEYHUNT_REF, KANGAROO_REF, BITCRACK_REF):
+        assert len(ref) == 40
+        assert all(char in "0123456789abcdef" for char in ref.lower())
+
+
+def test_clone_or_update_fetches_and_checks_out_exact_ref(tmp_path, monkeypatch):
+    dest = tmp_path / "vendor" / "solver"
+    (dest / ".git").mkdir(parents=True)
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, cwd=None):
+        commands.append(cmd)
+        if cmd[-2:] == ["rev-parse", "HEAD"]:
+            return 0, "abc123\n"
+        return 0, ""
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._run", fake_run)
+    _clone_or_update("https://example.com/solver.git", dest, "abc123")
+
+    assert ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", "abc123"] in commands
+    assert [
+        "git",
+        "-C",
+        str(dest),
+        "checkout",
+        "--force",
+        "--detach",
+        "FETCH_HEAD",
+    ] in commands
+
+
+def test_clone_or_update_rejects_wrong_commit(tmp_path, monkeypatch):
+    dest = tmp_path / "vendor" / "solver"
+    (dest / ".git").mkdir(parents=True)
+    expected = "a" * 40
+
+    def fake_run(cmd: list[str], *, cwd=None):
+        if cmd[-2:] == ["rev-parse", "HEAD"]:
+            return 0, f"{'b' * 40}\n"
+        return 0, ""
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._run", fake_run)
+    try:
+        _clone_or_update("https://example.com/solver.git", dest, expected)
+        assert False, "expected source verification failure"
+    except RuntimeError as exc:
+        assert expected in str(exc)
 
 
 def test_build_gencode_dual_sass_and_ptx():

@@ -10,6 +10,9 @@ This is a practice tool for **already-solved** catalog entries. It does **not** 
 
 **Release:** `v0.5.0` — full loop (`once`) + GPU resource slotting for VPS hosts
 
+**Runtime:** Linux with Python 3.12+. GPU hosts additionally need a CUDA toolkit
+that supports the selected card (`CUDA 12.8+` for RTX 5090 / `sm_120`).
+
 ## Quick start
 
 Local / CPU:
@@ -28,11 +31,12 @@ btc-puzzle-lab run 1
 GPU experiment pod (RunPod etc.):
 
 ```bash
-git clone https://github.com/catamitez0-maker/btc-puzzle-lab.git
+git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
-btc-puzzle-lab once --ids 71 --resource gpu
+btc-puzzle-lab once --ids 71 --resource gpu --max-seconds 300 \
+  --no-transfer --no-notify --no-progress
 # details: docs/MACHINE.md , docs/LOOP.md
 ```
 
@@ -41,7 +45,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.5.0"
+python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.5.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
@@ -52,7 +56,11 @@ Writable `state/` and `config/` resolve in this order:
 2. the git checkout root (editable / `pip install -e .`)
 3. the current working directory (wheel / plain installs)
 
-Copy `config/.env.example` → `config/.env` only when exercising auto-transfer.
+Create the private config only when exercising auto-transfer:
+
+```bash
+install -m 600 config/.env.example config/.env
+```
 
 ### Cursor Cloud
 
@@ -177,6 +185,9 @@ btc-puzzle-lab run 20 --transfer
 ```
 
 Private keys are written only under ignored `state/HITS.jsonl` (`0600`). CLI does not print them unless you pass `--show-key`. Duplicate puzzle/key hits are deduped.
+Transfer/notification dotenv values are parsed without exporting them to child
+processes, and external solver processes receive a minimal environment that
+excludes application and cloud credentials.
 
 ## Search UX
 
@@ -245,6 +256,10 @@ btc-puzzle-lab engines                      # status
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
 `config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
 
+The installer checks out immutable upstream commits by default so rebuilds are
+repeatable. Advanced operators can override a source by exporting the matching
+`BTC_PUZZLE_LAB_<ENGINE>_REPO` and `BTC_PUZZLE_LAB_<ENGINE>_REF` together.
+
 ```bash
 btc-puzzle-lab engines
 btc-puzzle-lab run 40 --auto
@@ -283,6 +298,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 - Standalone lab (no Discord / Gemini; own transfer module).
 - Live broadcast is opt-in only behind explicit confirm.
 - Solved-puzzle balances are usually already spent; transfer dry-runs still exercise the pipeline.
+- GitHub hosts source, documentation, lint, unit tests, and release builds only.
+  Never run keyspace searches, external solver builds, or GPU workloads in
+  GitHub Actions or Codespaces.
 
 ## Local state
 
@@ -292,6 +310,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/runs.jsonl` | Structured run events, no secrets (gitignored) |
 | `state/scan_<id>.json` | Search resume checkpoints (gitignored) |
 | `state/coverage_<id>.json` | Range coverage ledger / chunk status (gitignored) |
+| `state/bitcrack_<id>.continue` | Persistent BitCrack restart cursor (gitignored) |
 | `state/batch_plan.json` | Catalog automation board (gitignored via `state/`) |
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
 | `config/.env` | Local transfer config (gitignored) |

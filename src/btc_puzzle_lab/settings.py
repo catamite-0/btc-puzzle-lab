@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from btc_puzzle_lab.crypto import is_valid_btc_address
 from btc_puzzle_lab.paths import ENV_FILE, REPO_ROOT
@@ -13,15 +14,26 @@ LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+def _value(name: str, values: Mapping[str, str | None]) -> str | None:
+    """Return an exported value first, then a dotenv value, without mutation."""
+    return os.environ.get(name, values.get(name))
+
+
+def _env_bool(name: str, default: bool, values: Mapping[str, str | None]) -> bool:
+    raw = _value(name, values)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
-    raw = os.getenv(name)
+def _env_int(
+    name: str,
+    default: int,
+    values: Mapping[str, str | None],
+    *,
+    minimum: int | None = None,
+) -> int:
+    raw = _value(name, values)
     value = default if raw is None or raw.strip() == "" else int(raw)
     if minimum is not None and value < minimum:
         raise ValueError(f"{name} must be >= {minimum}")
@@ -63,35 +75,48 @@ class NotifySettings:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
 
-def load_dotenv_files() -> None:
-    # Optional local config; never required for search/audit-only use.
-    engines_env = REPO_ROOT / "config" / "engines.env"
-    if engines_env.is_file():
-        load_dotenv(engines_env, override=False)
+def load_dotenv_files() -> dict[str, str | None]:
+    """Parse local config without copying credentials into ``os.environ``."""
+    values: dict[str, str | None] = {}
+    # Keep the historical precedence: exported env, config/.env, then root .env.
     if ENV_FILE.is_file():
-        load_dotenv(ENV_FILE, override=False)
+        try:
+            os.chmod(ENV_FILE, 0o600)
+        except OSError:
+            pass
+        for key, value in dotenv_values(ENV_FILE).items():
+            values.setdefault(key, value)
     root_env = REPO_ROOT / ".env"
     if root_env.is_file():
-        load_dotenv(root_env, override=False)
+        for key, value in dotenv_values(root_env).items():
+            values.setdefault(key, value)
+    return values
 
 
 def get_transfer_settings() -> TransferSettings:
-    load_dotenv_files()
-    strategy = os.getenv("AUTO_TRANSFER_FEE_STRATEGY", "normal").strip().lower() or "normal"
+    values = load_dotenv_files()
+    strategy = (_value("AUTO_TRANSFER_FEE_STRATEGY", values) or "normal").strip().lower()
+    strategy = strategy or "normal"
     settings = TransferSettings(
-        enabled=_env_bool("AUTO_TRANSFER_ENABLED", False),
-        dry_run=_env_bool("AUTO_TRANSFER_DRY_RUN", True),
-        dest_addr=os.getenv("AUTO_TRANSFER_DEST_ADDR", "").strip(),
-        live_confirm=os.getenv("AUTO_TRANSFER_LIVE_CONFIRM", "").strip(),
-        min_balance_sats=_env_int("AUTO_TRANSFER_MIN_BALANCE_SATS", 5000, minimum=0),
-        min_send_sats=_env_int("AUTO_TRANSFER_MIN_SEND_SATS", 546, minimum=0),
-        default_fee_rate=_env_int("AUTO_TRANSFER_DEFAULT_FEE_RATE", 15, minimum=1),
-        max_fee_rate=_env_int("AUTO_TRANSFER_MAX_FEE_RATE", 250, minimum=1),
+        enabled=_env_bool("AUTO_TRANSFER_ENABLED", False, values),
+        dry_run=_env_bool("AUTO_TRANSFER_DRY_RUN", True, values),
+        dest_addr=(_value("AUTO_TRANSFER_DEST_ADDR", values) or "").strip(),
+        live_confirm=(_value("AUTO_TRANSFER_LIVE_CONFIRM", values) or "").strip(),
+        min_balance_sats=_env_int(
+            "AUTO_TRANSFER_MIN_BALANCE_SATS", 5000, values, minimum=0
+        ),
+        min_send_sats=_env_int("AUTO_TRANSFER_MIN_SEND_SATS", 546, values, minimum=0),
+        default_fee_rate=_env_int(
+            "AUTO_TRANSFER_DEFAULT_FEE_RATE", 15, values, minimum=1
+        ),
+        max_fee_rate=_env_int("AUTO_TRANSFER_MAX_FEE_RATE", 250, values, minimum=1),
         fee_strategy=strategy,
-        fee_target_blocks=_env_int("AUTO_TRANSFER_FEE_TARGET_BLOCKS", 2, minimum=1),
-        rbf=_env_bool("AUTO_TRANSFER_RBF", True),
-        confirmed_only=_env_bool("AUTO_TRANSFER_CONFIRMED_ONLY", True),
-        max_fee_sats=_env_int("AUTO_TRANSFER_MAX_FEE_SATS", 100_000, minimum=1),
+        fee_target_blocks=_env_int(
+            "AUTO_TRANSFER_FEE_TARGET_BLOCKS", 2, values, minimum=1
+        ),
+        rbf=_env_bool("AUTO_TRANSFER_RBF", True, values),
+        confirmed_only=_env_bool("AUTO_TRANSFER_CONFIRMED_ONLY", True, values),
+        max_fee_sats=_env_int("AUTO_TRANSFER_MAX_FEE_SATS", 100_000, values, minimum=1),
     )
     if settings.default_fee_rate > settings.max_fee_rate:
         raise ValueError("AUTO_TRANSFER_DEFAULT_FEE_RATE exceeds AUTO_TRANSFER_MAX_FEE_RATE")
@@ -119,12 +144,14 @@ def validate_transfer_settings(settings: TransferSettings) -> list[str]:
 
 
 def get_notify_settings() -> NotifySettings:
-    load_dotenv_files()
+    values = load_dotenv_files()
     return NotifySettings(
-        enabled=_env_bool("NOTIFY_ENABLED", False),
-        webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
-        telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
-        telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
+        enabled=_env_bool("NOTIFY_ENABLED", False, values),
+        webhook_url=(_value("NOTIFY_WEBHOOK_URL", values) or "").strip(),
+        telegram_bot_token=(
+            _value("NOTIFY_TELEGRAM_BOT_TOKEN", values) or ""
+        ).strip(),
+        telegram_chat_id=(_value("NOTIFY_TELEGRAM_CHAT_ID", values) or "").strip(),
     )
 
 
@@ -163,4 +190,8 @@ def ensure_config_dir() -> Path:
     from btc_puzzle_lab.paths import CONFIG_DIR
 
     CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass
     return CONFIG_DIR
