@@ -95,9 +95,9 @@ def _hits_for_ids(puzzle_ids: set[int]) -> list[Hit]:
 
 def run_once(
     *,
-    sync: bool = True,
-    status: str = "unsolved",
-    bits_min: int | None = 32,
+    sync: bool = False,
+    status: str = "solved",
+    bits_min: int | None = 1,
     bits_max: int | None = None,
     puzzle_ids: list[int] | None = None,
     limit: int = 1,
@@ -106,8 +106,8 @@ def run_once(
     require_doctor: bool = True,
     audit: bool = True,
     check_balance: bool = False,
-    transfer: bool = True,
-    notify: bool = True,
+    transfer: bool = False,
+    notify: bool = False,
     progress: bool = True,
     timeout: float | None = None,
     plan_path: Path | None = None,
@@ -115,8 +115,8 @@ def run_once(
 ) -> LoopResult:
     """Run one closed-loop pass on this host.
 
-    Defaults favor a GPU VPS: sync unsolved catalog, take one ready GPU job,
-    stop on hit, audit, then attempt sweep under existing transfer policy.
+    Defaults stay inside the packaged solved-practice catalog. Catalog sync,
+    notifications, and transfer are explicit operator opt-ins.
     """
     profile = host or probe_host()
     if require_doctor and not doctor_ok(run_doctor()):
@@ -318,9 +318,9 @@ def run_watch(
     sync_every: int = 1,
     stop_on_hit: bool = True,
     timeout: float | None = None,
-    sync: bool = True,
-    status: str = "unsolved",
-    bits_min: int | None = 32,
+    sync: bool = False,
+    status: str = "solved",
+    bits_min: int | None = 1,
     bits_max: int | None = None,
     puzzle_ids: list[int] | None = None,
     limit: int = 1,
@@ -328,17 +328,16 @@ def run_watch(
     require_doctor: bool = True,
     audit: bool = True,
     check_balance: bool = False,
-    transfer: bool = True,
-    notify: bool = True,
+    transfer: bool = False,
+    notify: bool = False,
     progress: bool = True,
     plan_path: Path | None = None,
     host: HostProfile | None = None,
 ) -> WatchResult:
     """Repeat ``run_once`` until hit, budget, or idle exhaustion.
 
-    For a dedicated 5090 VPS hunting one unsolved puzzle, prefer a single
-    ``once`` with no timeout (BitCrack holds the GPU). Use ``watch`` when you
-    want budgeted passes or to re-sync after short practice/CPU jobs.
+    This general loop defaults to solved practice entries. Use the dedicated
+    bounded synthetic benchmark for paid GPU throughput and resume checks.
     """
     deadline = (
         time.monotonic() + max_hours * 3600.0

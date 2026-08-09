@@ -24,8 +24,14 @@ def test_machine_bootstrap_is_fail_closed():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "engines install || true" not in text
     assert "import-catalog || true" not in text
-    assert "btc-puzzle-lab engines install --force" in text
-    assert "btc-puzzle-lab import-catalog" in text
+    assert "btc-puzzle-lab engines install --only bitcrack --force" in text
+    assert "btc-puzzle-lab engines install --force" not in text
+    assert "btc-puzzle-lab import-catalog" not in text
+    assert "btc-puzzle-lab benchmark-gpu --seconds 90" in text
+    assert "btc-puzzle-lab verify 20" in text
+    assert "once --ids 20" not in text
+    assert "--ids 71" not in text
+    assert "--status unsolved" not in text
     assert "sys.version_info < (3, 12)" in text
     assert '[[ "$(id -u)" -eq 0 ]]' in text
 

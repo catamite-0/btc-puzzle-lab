@@ -1,10 +1,15 @@
+import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.crypto import compressed_pubkey, privkey_bytes
 from btc_puzzle_lab.engines import (
     _append_result_files,
+    _run,
     _solver_env,
     parse_privkey_text,
     redact_engine_line,
@@ -18,6 +23,23 @@ def test_parse_privkey_text_common_formats():
     assert parse_privkey_text("PRIVATE KEY: 0000000000000000000000000000000000000000000000000000000000000015") == 0x15
     assert parse_privkey_text("Priv: 0xd2c55") == 0xD2C55
     assert parse_privkey_text("no key here") is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="engine streaming loop is POSIX-only")
+def test_run_redacts_a_target_from_command_and_streamed_output(tmp_path, capsys):
+    target = "Z7Zo2RKUSobZnoLvqCS3aroukmiorj2bt6"
+    code, output = _run(
+        [sys.executable, "-c", "import sys; print(sys.argv[1])", target],
+        cwd=tmp_path,
+        progress=True,
+        show_command=True,
+        hidden_values=(target,),
+    )
+    assert code == 0
+    assert target in output
+    displayed = capsys.readouterr().out
+    assert target not in displayed
+    assert "[REDACTED]" in displayed
 
 
 def test_parse_privkey_text_bitcrack_result_requires_expected_address():

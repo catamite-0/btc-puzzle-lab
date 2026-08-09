@@ -17,7 +17,7 @@ from btc_puzzle_lab.engines import resolve_binary
 from btc_puzzle_lab.hits import read_hits, utc_now
 from btc_puzzle_lab.paths import STATE_DIR
 from btc_puzzle_lab.runlog import log_event
-from btc_puzzle_lab.search import run_puzzle
+from btc_puzzle_lab.search import is_verified_practice_target, run_puzzle
 from btc_puzzle_lab.strategy import (
     HostProfile,
     StrategyPlan,
@@ -133,6 +133,8 @@ def load_plan(path: Path | None = None) -> BatchPlan | None:
 
 
 def _classify_job(plan: StrategyPlan, puzzle: Puzzle) -> tuple[JobStatus, str | None]:
+    if not is_verified_practice_target(puzzle):
+        return "blocked", "execution is limited to verified solved-practice entries"
     if plan.engine in LOCAL_ENGINES:
         if plan.engine == "inject-known" and puzzle.practice_solution is None:
             return "blocked", "inject-known needs practice_solution_hex"
@@ -176,7 +178,7 @@ def _match_filters(
 
 def build_plan(
     *,
-    status: str = "all",
+    status: str = "solved",
     bits_min: int | None = None,
     bits_max: int | None = None,
     puzzle_ids: list[int] | None = None,
@@ -253,9 +255,9 @@ class BatchRunResult:
 def run_batch(
     plan: BatchPlan,
     *,
-    limit: int | None = None,
+    limit: int | None = 1,
     resume: bool = True,
-    stop_on_hit: bool = False,
+    stop_on_hit: bool = True,
     include_blocked: bool = False,
     progress: bool = True,
     plan_path: Path | None = None,

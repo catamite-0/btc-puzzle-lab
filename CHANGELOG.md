@@ -6,7 +6,19 @@ All notable changes to this project are documented here.
 
 ### Added
 - Hit notifications via `NOTIFY_WEBHOOK_URL` and/or Telegram (`NOTIFY_TELEGRAM_*`)
-- `once` / `watch` auto-notify on hit; `--no-notify` to skip; never ships private keys
+- `benchmark-gpu`: two bounded BitCrack rounds against a fresh random hash
+  target, with checkpoint-resume, log-redaction, and HITS-integrity validation
+
+### Changed
+- `once` / `watch` now default to no catalog sync, solved practice entries,
+  transfer off, and notifications off; each formerly automatic action is opt-in
+- Runpod guidance is random-synthetic-only and contains no funded or unsolved target
+- Search execution is restricted to entries whose included solved-practice key
+  verifies against the catalog address
+
+### Security
+- GitHub workflow regression tests block solver, Runpod, GPU, catalog-search,
+  and self-hosted-runner commands
 
 ## [0.5.0] — 2026-08-09
 

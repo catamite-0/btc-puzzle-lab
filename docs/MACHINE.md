@@ -1,30 +1,31 @@
-# Machine experiment bootstrap
+# Runpod synthetic GPU benchmark
 
-> Full closed loop: [LOOP.md](LOOP.md) (`btc-puzzle-lab once`).  
-> Transfer ops: [TRANSFER.md](TRANSFER.md).
+This runbook measures BitCrack throughput and restart behavior without selecting
+a catalog or user-supplied Bitcoin address. Each command creates a fresh CSPRNG
+hash target and a non-network Base58 input string accepted by the pinned solver.
+No private scalar is generated; the target has no known key or funds, is hidden
+from logs, and must never be funded.
 
-Short path after a RunPod (or similar) GPU pod is up.
-
-## 1. Deploy a bounded benchmark Pod
+## 1. Create a bounded Pod
 
 | Setting | Recommendation |
 |---|---|
 | Product | **Pods** (not Serverless) |
-| First GPU | **RTX 4090 Community on-demand**; A/B against Secure/5090 later |
-| Instance | On-demand — avoid Spot for long unsolved runs |
+| First GPU | **RTX 4090 Community on-demand** |
+| Capacity | On-demand for a reproducible short sample |
 | Image | `runpod/base:1.0.2-cuda1281-ubuntu2404@sha256:e10e75ecb02def99471f0dce2ea51712e4491080c233100cb0aa173ed15ccc52` |
 | Container disk | 20–30 GiB |
-| Volume disk | 20 GiB mounted on `/workspace` (checkout, venv, solvers, state) |
-| Ports | SSH `22/tcp` only; Jupyter is unnecessary |
-| Concurrency | **1 GPU = 1 puzzle** |
+| Volume disk | 20 GiB mounted on `/workspace` |
+| Ports | SSH `22/tcp` only |
+| Concurrency | One benchmark process per GPU |
 
-Keep the image's `/start.sh`. Do not put API keys, transfer configuration, or
-private keys in the image. Set an external/provider-side stop deadline before
-starting work. If the GPU is idle, stop the Pod.
+Set a provider-side termination deadline before starting. A 45–60 minute guard
+normally leaves enough time to clone, compile, run two rounds (three minutes
+total), inspect the result, and stop the Pod. The process timeout does
+not stop or delete the Pod.
 
-This is an engineering benchmark, not an economically plausible #71 search.
-The interval contains `2^70` candidates. Even at 10 GKey/s, expected time to a
-hit is about 1,871 years; a six-hour run has roughly a 1-in-5.47-million chance.
+Do not add Runpod API keys, transfer configuration, wallet material, catalog
+targets, or notification credentials to the image or Pod environment.
 
 ## 2. Bootstrap
 
@@ -37,64 +38,69 @@ bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
 ```
 
-The bootstrap refuses Python older than 3.12 instead of creating a broken
-environment. Set `BTC_PUZZLE_LAB_PYTHON=/path/to/python3.12` when the desired
-interpreter is not named `python3.12` or `python3`.
+The bootstrap:
 
-What it does:
+- refuses Python older than 3.12;
+- installs the package and required build dependencies;
+- builds only the pinned BitCrack source required by this GPU benchmark;
+- runs `doctor` and `adapt`;
+- does **not** import the full catalog or start a search.
 
-- installs build deps + Python package
-- `engines install --force` → pinned keyhunt / kangaroo, and **bitcrack** when `nvcc` exists
-  (makefile patched with detected `COMPUTE_CAP` + dual SASS/PTX gencode)
-- `import-catalog` → full puzzle list in workspace `data/puzzles.json`
-- `doctor` + `adapt` preflight
-
-## 3. Verify GPU solvers
+## 3. Verify the toolchain
 
 ```bash
 nvidia-smi
 btc-puzzle-lab doctor
 btc-puzzle-lab engines
-# if BitCrack missing but CUDA is present:
+```
+
+If CUDA is present but BitCrack is missing:
+
+```bash
 btc-puzzle-lab engines install --only bitcrack --force
 ```
 
-Confirm compute capability shows **12.0** (reported as `120`) on 5090.
+## 4. Verify the package, then run only the synthetic GPU check
 
-The bundled catalog is a snapshot. Before spending money on an unsolved target,
-independently confirm its live status and balance; do not treat
-`import-catalog` alone as a live-state check.
-
-## 4. Correctness and five-minute benchmark
+First, run a non-search verification of a bundled, already-solved fixture:
 
 ```bash
-# known solved range: prove the binary returns the expected kind of result
-btc-puzzle-lab run 20 --engine bitcrack --no-progress
-
-# bounded #71 throughput sample; no transfer or notification credentials
-btc-puzzle-lab once --ids 71 --resource gpu --max-seconds 300 \
-  --no-transfer --no-notify --no-progress
+btc-puzzle-lab verify 20
 ```
 
-Record keys/s, GPU utilization, power, and total cost, then stop the Pod. Compare
-cards using the same project commit, solver commits, parameters, and time window.
-
-BitCrack progress is persisted at `state/bitcrack_<id>.continue`. Before using
-Spot, run a three-minute session, terminate it, restart the same command, and
-confirm that the continue file advances rather than restarting the keyspace.
-
-For a longer bounded session:
+Then run the synthetic throughput/resume check:
 
 ```bash
-btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6 \
-  --no-transfer --no-notify --no-progress
+btc-puzzle-lab benchmark-gpu --seconds 90
 ```
 
-`--max-hours` stops the solver loop only; it does **not** stop or delete the
-RunPod Pod. Set a provider-side termination deadline/cost guard as well, and
-verify the Pod is stopped when the session ends.
+The benchmark has no address, keyspace, or puzzle-ID options. Each invocation
+creates a fresh random hash target and a fresh high-numbered checkpoint; its two
+bounded rounds share that private in-process target, and the second must resume
+past the first cursor. The wrapper redacts the target from its command display and
+streamed solver output. The underlying hash has no known private key or funds, but
+it must never be funded.
+`--seconds` is hard-limited to 75–90 per round because the pinned BitCrack
+checkpoint interval is 60 seconds.
 
-Optional BitCrack tuning (env):
+A passing result reports:
+
+- a short fingerprint of the ephemeral target, never the target itself;
+- checkpoint-derived MKey/s for each round;
+- checkpoint elapsed time advancing by at least 50 seconds per round;
+- a strictly increasing restart cursor;
+- no creation or modification of `state/HITS.jsonl`.
+
+The cursor is stored at a fresh `state/bitcrack_9xxxxxxxx.continue` path. A later
+benchmark invocation deliberately allocates a different path and target.
+
+## 5. Compare and tear down
+
+For card comparisons, keep the project commit, pinned solver commit, container
+image, grid parameters, and 90-second window identical. Record the displayed
+MKey/s, GPU utilization, power, and provider cost.
+
+Optional BitCrack tuning variables:
 
 | Env | Purpose |
 |---|---|
@@ -103,39 +109,8 @@ Optional BitCrack tuning (env):
 | `BTC_PUZZLE_LAB_BITCRACK_THREADS` | `-t` |
 | `BTC_PUZZLE_LAB_BITCRACK_POINTS` | `-p` |
 
-Start without grid overrides; only tune if `nvidia-smi` shows the card under-used.
+After collecting the bounded result, stop and delete the Pod and verify the
+Runpod account has no test Pod or unintended network volume left behind.
 
-Manual board (same strategy under the hood):
-
-```bash
-btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
-btc-puzzle-lab status
-btc-puzzle-lab batch --limit 1 --stop-on-hit
-btc-puzzle-lab strategy 71
-btc-puzzle-lab run 71 --auto
-```
-
-CPU on the same box: leave it for `once` orchestration / audit / transfer.
-Optional second puzzle only if it is a **different** pubkey/CPU job and does not starve the GPU search.
-
-## 5. Transfer (only after a real hit)
-
-Keep dry-run until verified. See [TRANSFER.md](TRANSFER.md).
-
-```bash
-install -m 600 config/.env.example config/.env
-# set DEST_ADDR; leave DRY_RUN=true
-btc-puzzle-lab transfer --verify-dry-run
-```
-
-`once` will call sweep automatically when transfer is enabled; defaults still skip/dry-run.
-
-## Useful commands
-
-| Command | Purpose |
-|---|---|
-| `doctor` | Blocking preflight |
-| `adapt` | Host tier + next actions |
-| `engines install` | Build solvers into `bin/` |
-| `once` | Full sync → plan → search → audit → sweep attempt |
-| `plan` / `batch` / `status` | Catalog automation board |
+See [LOOP.md](LOOP.md) for the solved-practice defaults and [SECURITY.md](../SECURITY.md)
+for the acceptable-use boundary.

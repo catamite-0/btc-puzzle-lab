@@ -1,6 +1,8 @@
+import inspect
+
 from btc_puzzle_lab.batch import build_plan
 from btc_puzzle_lab.catalog import Puzzle
-from btc_puzzle_lab.cli import main
+from btc_puzzle_lab.cli import build_parser, main
 from btc_puzzle_lab.loop import (
     resolve_resource_filter,
     run_once,
@@ -28,7 +30,30 @@ def test_resolve_resource_auto_prefers_gpu_on_gpu_host():
     assert resolve_resource_filter("auto", cpu) == "cpu"
 
 
-def test_select_ready_jobs_picks_lowest_bits_gpu(tmp_path, monkeypatch):
+def test_loop_api_and_cli_defaults_stay_in_solved_practice():
+    for function in (run_once, run_watch):
+        parameters = inspect.signature(function).parameters
+        assert parameters["sync"].default is False
+        assert parameters["status"].default == "solved"
+        assert parameters["bits_min"].default == 1
+        assert parameters["transfer"].default is False
+        assert parameters["notify"].default is False
+
+    args = build_parser().parse_args(["once"])
+    assert args.sync_catalog is False
+    assert args.status == "solved"
+    assert args.bits_min == 1
+    assert args.transfer is False
+    assert args.notify is False
+
+    plan_args = build_parser().parse_args(["plan"])
+    assert plan_args.status == "solved"
+    batch_args = build_parser().parse_args(["batch"])
+    assert batch_args.limit == 1
+    assert batch_args.stop_on_hit is True
+
+
+def test_select_ready_jobs_excludes_unsolved_gpu_targets(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
     fake = tmp_path / "bin" / "cuBitCrack"
@@ -62,10 +87,11 @@ def test_select_ready_jobs_picks_lowest_bits_gpu(tmp_path, monkeypatch):
             notes="",
         ),
     ]
-    plan = build_plan(puzzles=puzzles, host=_gpu_host())
+    plan = build_plan(status="all", puzzles=puzzles, host=_gpu_host())
     assert all(job.resource == "gpu" for job in plan.jobs)
+    assert all(job.job_status == "blocked" for job in plan.jobs)
     selected = select_ready_jobs(plan, resource="gpu", limit=1)
-    assert [job.puzzle_id for job in selected] == [71]
+    assert selected == []
 
 
 def test_run_once_practice_hit_audits_without_transfer_config(tmp_path, monkeypatch):

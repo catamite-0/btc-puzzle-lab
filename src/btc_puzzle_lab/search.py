@@ -58,6 +58,28 @@ class ScanCheckpoint:
         }
 
 
+def is_verified_practice_target(puzzle: Puzzle) -> bool:
+    """True only when the catalog already contains and verifies the solution."""
+    secret = puzzle.practice_solution
+    if puzzle.status != "solved" or secret is None:
+        return False
+    if not puzzle.range_start <= secret <= puzzle.range_end:
+        return False
+    try:
+        derived = privkey_to_p2pkh_address(privkey_bytes(secret))
+    except ValueError:
+        return False
+    return derived == puzzle.address
+
+
+def require_verified_practice_target(puzzle: Puzzle) -> None:
+    if not is_verified_practice_target(puzzle):
+        raise RuntimeError(
+            "search execution is limited to catalog entries with a verified "
+            "solved practice key; use `benchmark-gpu` for GPU throughput"
+        )
+
+
 def _make_hit(puzzle: Puzzle, secret: int, engine: str) -> Hit:
     pk_hex = f"{secret:064x}"
     address = privkey_to_p2pkh_address(privkey_bytes(pk_hex))
@@ -443,6 +465,7 @@ def run_sequential(
     seed: int | None = None,
     max_chunks: int | None = None,
 ) -> SearchOutcome:
+    require_verified_practice_target(puzzle)
     lo = puzzle.range_start if start is None else start
     hi = puzzle.range_end if end is None else end
     return _scan_range(
@@ -475,6 +498,7 @@ def run_window(
     seed: int | None = None,
     max_chunks: int | None = None,
 ) -> SearchOutcome:
+    require_verified_practice_target(puzzle)
     if puzzle.practice_solution is None:
         return SearchOutcome(
             hit=None,
@@ -510,6 +534,7 @@ def run_window(
 
 
 def run_inject_known(puzzle: Puzzle) -> SearchOutcome:
+    require_verified_practice_target(puzzle)
     """Practice-only: record the catalog solution after local verification."""
     if puzzle.practice_solution is None:
         return SearchOutcome(
@@ -529,6 +554,7 @@ def run_external(
     timeout: float | None = None,
     progress: bool = True,
 ) -> SearchOutcome:
+    require_verified_practice_target(puzzle)
     log_event(
         "search_start",
         puzzle_id=puzzle.id,
@@ -573,6 +599,7 @@ def run_puzzle(
     dp: int = 16,
     timeout: float | None = None,
 ) -> SearchOutcome:
+    require_verified_practice_target(puzzle)
     choice = (engine or puzzle.engine_default).lower()
     if choice in {"sequential", "seq"}:
         return run_sequential(

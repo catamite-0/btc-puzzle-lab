@@ -15,6 +15,13 @@ from btc_puzzle_lab.batch import (
     run_batch,
     save_plan,
 )
+from btc_puzzle_lab.benchmark import (
+    DEFAULT_BENCHMARK_SECONDS,
+    MAX_BENCHMARK_SECONDS,
+    MIN_BENCHMARK_SECONDS,
+    format_synthetic_gpu_benchmark,
+    run_synthetic_gpu_benchmark,
+)
 from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
 from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL, import_catalog
 from btc_puzzle_lab.coverage import format_coverage, load_coverage
@@ -447,7 +454,7 @@ def _loop_timeout(args: argparse.Namespace) -> float | None:
 
 def cmd_once(args: argparse.Namespace) -> int:
     result = run_once(
-        sync=not args.no_sync,
+        sync=args.sync_catalog,
         status=args.status,
         bits_min=args.bits_min,
         bits_max=args.bits_max,
@@ -458,8 +465,8 @@ def cmd_once(args: argparse.Namespace) -> int:
         require_doctor=not args.no_doctor,
         audit=not args.no_audit,
         check_balance=args.balance,
-        transfer=not args.no_transfer,
-        notify=not args.no_notify,
+        transfer=args.transfer,
+        notify=args.notify,
         progress=not args.no_progress,
         timeout=_loop_timeout(args),
     )
@@ -477,7 +484,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         sync_every=args.sync_every,
         stop_on_hit=not args.no_stop_on_hit,
         timeout=_loop_timeout(args),
-        sync=not args.no_sync,
+        sync=args.sync_catalog,
         status=args.status,
         bits_min=args.bits_min,
         bits_max=args.bits_max,
@@ -487,8 +494,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         require_doctor=not args.no_doctor,
         audit=not args.no_audit,
         check_balance=args.balance,
-        transfer=not args.no_transfer,
-        notify=not args.no_notify,
+        transfer=args.transfer,
+        notify=args.notify,
         progress=not args.no_progress,
     )
     print(format_watch_result(result))
@@ -499,6 +506,15 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return 0
     if result.last is not None and not result.last.ok:
         return 1
+    return 0
+
+
+def cmd_benchmark_gpu(args: argparse.Namespace) -> int:
+    result = run_synthetic_gpu_benchmark(
+        seconds=args.seconds,
+        progress=not args.no_progress,
+    )
+    print(format_synthetic_gpu_benchmark(result))
     return 0
 
 
@@ -515,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_import = sub.add_parser(
         "import-catalog",
-        help="import full ~160-puzzle catalog into data/puzzles.json",
+        help="import public catalog metadata into data/puzzles.json (explicit opt-in)",
     )
     p_import.add_argument(
         "--url",
@@ -542,19 +558,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_import.set_defaults(func=cmd_import_catalog)
 
-    p_plan = sub.add_parser("plan", help="build catalog-wide batch plan (algorithm routing)")
+    p_plan = sub.add_parser("plan", help="build a solved-practice batch plan")
     p_plan.add_argument(
         "--status",
         choices=["all", "solved", "unsolved"],
-        default="all",
-        help="filter catalog status (default: all)",
+        default="solved",
+        help="filter catalog status (default: solved practice)",
     )
     p_plan.add_argument("--bits-min", type=int, default=None, help="min bits inclusive")
     p_plan.add_argument("--bits-max", type=int, default=None, help="max bits inclusive")
     p_plan.add_argument(
         "--ids",
         default=None,
-        help="comma-separated puzzle ids, e.g. 1,5,20,71",
+        help="comma-separated practice puzzle ids, e.g. 1,5,20",
     )
     p_plan.add_argument(
         "--output",
@@ -579,18 +595,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument(
         "--limit",
         type=int,
-        default=None,
-        help="run at most N ready jobs this invocation",
+        default=1,
+        help="run at most N ready jobs this invocation (default: 1)",
     )
     p_batch.add_argument(
         "--no-resume",
         action="store_true",
         help="do not skip jobs already marked done/hit",
     )
-    p_batch.add_argument(
+    stop_group = p_batch.add_mutually_exclusive_group()
+    stop_group.add_argument(
         "--stop-on-hit",
         action="store_true",
-        help="stop the batch after the first new hit",
+        default=True,
+        help="stop the batch after the first new hit (default)",
+    )
+    stop_group.add_argument(
+        "--no-stop-on-hit",
+        dest="stop_on_hit",
+        action="store_false",
+        help="continue through the bounded solved-practice plan",
     )
     p_batch.add_argument(
         "--include-blocked",
@@ -826,25 +850,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_summary.set_defaults(func=cmd_summary)
 
+    p_benchmark = sub.add_parser(
+        "benchmark-gpu",
+        help="run two bounded BitCrack rounds against a fresh random hash target",
+    )
+    p_benchmark.add_argument(
+        "--seconds",
+        type=float,
+        default=DEFAULT_BENCHMARK_SECONDS,
+        help=(
+            "seconds per round "
+            f"({MIN_BENCHMARK_SECONDS:g}-{MAX_BENCHMARK_SECONDS:g}; "
+            f"default: {DEFAULT_BENCHMARK_SECONDS:g})"
+        ),
+    )
+    p_benchmark.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="hide BitCrack progress (checkpoint-derived rate is still reported)",
+    )
+    p_benchmark.set_defaults(func=cmd_benchmark_gpu)
+
     def _add_loop_args(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "--no-sync",
+        sync_group = parser.add_mutually_exclusive_group()
+        sync_group.add_argument(
+            "--sync-catalog",
+            dest="sync_catalog",
             action="store_true",
-            help="skip catalog import (use current workspace catalog)",
+            default=False,
+            help="explicitly import public catalog metadata before planning",
+        )
+        sync_group.add_argument(
+            "--no-sync",
+            dest="sync_catalog",
+            action="store_false",
+            help=argparse.SUPPRESS,
         )
         parser.add_argument(
             "--status",
             choices=["all", "solved", "unsolved"],
-            default="unsolved",
-            help="catalog status filter for planning (default: unsolved)",
+            default="solved",
+            help="catalog status filter for planning (default: solved practice)",
         )
-        parser.add_argument("--bits-min", type=int, default=32)
+        parser.add_argument("--bits-min", type=int, default=1)
         parser.add_argument("--bits-max", type=int, default=None)
         parser.add_argument(
             "--ids",
             type=str,
             default=None,
-            help="comma-separated puzzle ids (e.g. 71)",
+            help="comma-separated practice puzzle ids (e.g. 20)",
         )
         parser.add_argument(
             "--limit",
@@ -878,15 +932,31 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="also query chain balance during audit",
         )
-        parser.add_argument(
-            "--no-transfer",
+        transfer_group = parser.add_mutually_exclusive_group()
+        transfer_group.add_argument(
+            "--transfer",
             action="store_true",
-            help="skip sweep attempt (still records hits)",
+            default=False,
+            help="explicitly enable the separately gated post-hit transfer path",
         )
-        parser.add_argument(
-            "--no-notify",
+        transfer_group.add_argument(
+            "--no-transfer",
+            dest="transfer",
+            action="store_false",
+            help=argparse.SUPPRESS,
+        )
+        notify_group = parser.add_mutually_exclusive_group()
+        notify_group.add_argument(
+            "--notify",
             action="store_true",
-            help="skip hit webhook/Telegram notify (NOTIFY_* in config/.env)",
+            default=False,
+            help="explicitly enable configured hit notifications",
+        )
+        notify_group.add_argument(
+            "--no-notify",
+            dest="notify",
+            action="store_false",
+            help=argparse.SUPPRESS,
         )
         parser.add_argument(
             "--no-progress",
@@ -902,17 +972,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_once = sub.add_parser(
         "once",
-        help=(
-            "full loop: sync unsolved → plan → one resource slot → "
-            "audit → optional dry-run transfer"
-        ),
+        help="one solved-practice pass; catalog sync and post-hit actions are opt-in",
     )
     _add_loop_args(p_once)
     p_once.set_defaults(func=cmd_once)
 
     p_watch = sub.add_parser(
         "watch",
-        help="repeat once until hit / max-hours / max-passes / idle",
+        help="repeat solved-practice passes until a bound or idle result",
     )
     _add_loop_args(p_watch)
     p_watch.add_argument(
@@ -937,7 +1004,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sync-every",
         type=int,
         default=1,
-        help="import-catalog every N passes (default: 1)",
+        help="when --sync-catalog is set, import every N passes (default: 1)",
     )
     p_watch.set_defaults(func=cmd_watch)
 

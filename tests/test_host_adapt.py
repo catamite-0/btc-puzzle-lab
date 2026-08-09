@@ -68,6 +68,20 @@ def test_format_and_adapt_text():
     assert any("engines install" in tip or "external solvers" in tip for tip in tips)
 
 
+def test_gpu_adapt_recommends_only_the_synthetic_benchmark():
+    profile = HostProfile(
+        cpus=8,
+        mem_mb=32_768,
+        engines=frozenset({"bitcrack"}),
+        gpu=True,
+        tier="gpu",
+    )
+    text = "\n".join(adapt_recommendations(profile)).lower()
+    assert "benchmark-gpu" in text
+    assert "--ids 71" not in text
+    assert "unsolved" not in text
+
+
 def test_cli_host_and_adapt():
     assert main(["host"]) == 0
     assert main(["adapt"]) == 0

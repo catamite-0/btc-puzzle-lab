@@ -1,14 +1,14 @@
 # BTC Puzzle Lab
 
-Educational CLI lab for [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) workflows.
+Educational CLI lab for solved [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzzles/bitcoin-puzzle-tx) practice workflows.
 
 ```text
-catalog → search engine → state/HITS.jsonl → local audit → optional sweep transfer
+solved practice catalog → search engine → state/HITS.jsonl → local audit
 ```
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-**Release:** `v0.5.0` — full loop (`once`) + GPU resource slotting for VPS hosts
+**Release:** `v0.5.0` — solved-practice loop (`once`) + bounded synthetic GPU benchmark
 
 **Runtime:** Linux with Python 3.12+. GPU hosts additionally need a CUDA toolkit
 that supports the selected card (`CUDA 12.8+` for RTX 5090 / `sm_120`).
@@ -25,7 +25,7 @@ python -m pip install -e .
 btc-puzzle-lab engines install
 btc-puzzle-lab doctor
 btc-puzzle-lab list
-btc-puzzle-lab run 1
+btc-puzzle-lab once --ids 20 --resource cpu
 ```
 
 GPU experiment pod (RunPod etc.):
@@ -35,10 +35,14 @@ git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
-btc-puzzle-lab once --ids 71 --resource gpu --max-seconds 300 \
-  --no-transfer --no-notify --no-progress
+btc-puzzle-lab benchmark-gpu --seconds 90
 # details: docs/MACHINE.md , docs/LOOP.md
 ```
+
+`benchmark-gpu` runs two bounded BitCrack rounds against a fresh random hash
+target. No private scalar is generated, the full target is suppressed from
+output, and the command accepts no address, keyspace, or puzzle-ID override.
+The target has no known key or funds and must never be funded.
 
 From a tagged release / wheel:
 
@@ -70,31 +74,31 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 
 ```text
 host / adapt → engines install → once
-                 (sync → plan → one gpu/cpu slot → audit → optional sweep)
+                 (solved practice → one gpu/cpu slot → local audit)
 
 # or the same steps manually:
-import-catalog → plan → batch → status → audit → transfer
+practice catalog → plan → batch → status → audit
 ```
 
 | Command | Role |
 |---|---|
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
-| `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
-| `watch` | Repeat `once` with hour/pass budgets |
-| `import-catalog` | Load full catalog into workspace `data/puzzles.json` |
-| `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
-| `batch` | Execute ready jobs (limit / resume / stop-on-hit) |
+| `once` | One solved-practice pass on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
+| `watch` | Repeat solved-practice passes with hour/pass budgets |
+| `benchmark-gpu` | Two 75–90 second rounds on a fresh random hash target |
+| `import-catalog` | Explicitly load public metadata into workspace `data/puzzles.json` |
+| `plan` | Build a verified solved-practice job board (`state/batch_plan.json`) |
+| `batch` | Execute one verified practice job by default (resume / stop-on-hit) |
 | `status` | Matrix: job status × coverage × hit |
-| `run --auto` | Single-puzzle path (same adaptive strategy) |
+| `run --auto` | Single verified solved-practice path (same adaptive strategy) |
 
 ```bash
 btc-puzzle-lab host
 btc-puzzle-lab adapt
-btc-puzzle-lab import-catalog
-btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
+btc-puzzle-lab plan --status solved --ids 20 --verbose
 btc-puzzle-lab status
-btc-puzzle-lab batch --limit 5 --stop-on-hit
+btc-puzzle-lab batch --limit 1 --stop-on-hit
 ```
 
 ### Environment adaptation
@@ -123,10 +127,12 @@ Blocked jobs are intentional: preferred algorithm is recorded even when the solv
 
 Default install ships a small **practice** catalog (solved puzzles for pipeline drills).
 
-Import the **full** Bitcoin Puzzle Transaction list (160 entries). Default uses the
+Import the **full** Bitcoin Puzzle Transaction list (160 entries) only when you
+need public metadata for analysis. Default uses the
 bundled CSV snapshot (`data/puzzle-tx-export.csv`); this writes workspace
-`data/puzzles.json` (overrides the packaged practice set for local runs — do not
-commit a full import unless you intend to):
+`data/puzzles.json` and overrides the packaged practice set. Importing metadata
+does not establish authorization to search an address; do not use this path in
+the Runpod benchmark and do not commit a local override unless intentional.
 
 ```bash
 btc-puzzle-lab import-catalog
@@ -137,7 +143,7 @@ btc-puzzle-lab import-catalog --url \
   'https://privatekeys.pw/puzzles/bitcoin-puzzle-tx/export?status=all'
 
 btc-puzzle-lab list
-btc-puzzle-lab strategy 71
+btc-puzzle-lab strategy 40
 ```
 
 Unsolved rows have `practice_solution_hex: null`; kangaroo-class engines need
@@ -291,7 +297,10 @@ python -m ruff check src tests
 python -m pytest
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and PRs to `main`. Tagging `v*` runs `.github/workflows/release.yml` (build wheel, smoke install, GitHub Release).
+GitHub Actions (`.github/workflows/ci.yml`) runs the same bounded CPU checks on
+pushes and PRs to `main`. Tagging `v*` runs `.github/workflows/release.yml`
+(build wheel, smoke install, GitHub Release). Neither workflow builds or runs a
+solver.
 
 ## Scope boundaries
 
@@ -300,7 +309,10 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 - Solved-puzzle balances are usually already spent; transfer dry-runs still exercise the pipeline.
 - GitHub hosts source, documentation, lint, unit tests, and release builds only.
   Never run keyspace searches, external solver builds, or GPU workloads in
-  GitHub Actions or Codespaces.
+  GitHub Actions (including self-hosted runners) or Codespaces.
+- Paid GPU examples use only the bounded, fresh random synthetic target. This
+  repository provides no Runpod runbook for funded addresses, third-party
+  wallets, or unsolved catalog entries.
 
 ## Local state
 
@@ -311,6 +323,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/scan_<id>.json` | Search resume checkpoints (gitignored) |
 | `state/coverage_<id>.json` | Range coverage ledger / chunk status (gitignored) |
 | `state/bitcrack_<id>.continue` | Persistent BitCrack restart cursor (gitignored) |
+| `state/bitcrack_9xxxxxxxx.continue` | Fresh synthetic benchmark cursor (gitignored) |
 | `state/batch_plan.json` | Catalog automation board (gitignored via `state/`) |
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
 | `config/.env` | Local transfer config (gitignored) |

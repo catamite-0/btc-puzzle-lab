@@ -72,4 +72,5 @@ btc-puzzle-lab transfer --puzzle <id> --fee-rate 20 --verify-dry-run
 
 - Keep `config/.env`, `state/HITS.jsonl`, and `state/dryrun_*.txhex` off git and backups you do not trust.
 - Flip `DRY_RUN` back to `true` after a live attempt.
-- Practice catalog keys are public; use a real destination only for real hits.
+- Practice catalog keys are public. Use this module only with keys and
+  destinations you own or are explicitly authorized to control.

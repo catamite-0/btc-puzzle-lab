@@ -194,9 +194,19 @@ def _run(
     cwd: Path,
     timeout: float | None = None,
     progress: bool = True,
+    show_command: bool = True,
+    hidden_values: tuple[str, ...] = (),
 ) -> tuple[int, str]:
     """Stream solver output (redacted) so long GPU runs do not buffer forever."""
-    print("running:", " ".join(cmd), flush=True)
+    def printable(text: str) -> str:
+        redacted = redact_engine_line(text)
+        for value in hidden_values:
+            if value:
+                redacted = redacted.replace(value, "[REDACTED]")
+        return redacted
+
+    if show_command:
+        print("running:", printable(" ".join(cmd)), flush=True)
     chunks: list[str] = []
     try:
         proc = subprocess.Popen(
@@ -233,7 +243,7 @@ def _run(
                     if rest:
                         chunks.append(rest)
                         if progress:
-                            print(redact_engine_line(rest), end="", flush=True)
+                            print(printable(rest), end="", flush=True)
                     break
                 continue
             line = proc.stdout.readline()
@@ -243,7 +253,7 @@ def _run(
                 continue
             chunks.append(line)
             if progress:
-                print(redact_engine_line(line), end="", flush=True)
+                print(printable(line), end="", flush=True)
         if timed_out and proc.poll() is None:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
@@ -370,6 +380,7 @@ def run_external_engine(
     dp: int = 16,
     timeout: float | None = None,
     progress: bool = True,
+    display_command: bool = True,
 ) -> ExternalEngineResult:
     if engine not in ENGINES:
         return ExternalEngineResult(engine, None, f"unknown external engine: {engine}")
@@ -399,7 +410,14 @@ def run_external_engine(
     }
     cmd, cwd = builders[engine]()
     try:
-        code, output = _run(cmd, cwd=cwd, timeout=timeout, progress=progress)
+        code, output = _run(
+            cmd,
+            cwd=cwd,
+            timeout=timeout,
+            progress=progress,
+            show_command=display_command,
+            hidden_values=(puzzle.address,),
+        )
     finally:
         # Best-effort cleanup; ignore failures on busy filesystems.
         for path in sorted(cwd.rglob("*"), reverse=True):

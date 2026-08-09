@@ -53,11 +53,8 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
-echo "==> solver toolchain"
-btc-puzzle-lab engines install --force
-
-echo "==> full catalog"
-btc-puzzle-lab import-catalog
+echo "==> pinned BitCrack toolchain"
+btc-puzzle-lab engines install --only bitcrack --force
 
 echo "==> preflight"
 btc-puzzle-lab doctor
@@ -67,12 +64,11 @@ cat <<'EOF'
 
 bootstrap done.
 
-Next (full loop, one GPU slot):
-  btc-puzzle-lab once --ids 71 --resource gpu
+Next (two bounded rounds against a fresh random hash target):
+  btc-puzzle-lab benchmark-gpu --seconds 90
 
-Or manual board:
-  btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
-  btc-puzzle-lab batch --limit 1 --stop-on-hit
+Non-search package correctness check:
+  btc-puzzle-lab verify 20
 
 Loop notes:     see docs/LOOP.md
 Machine notes:  see docs/MACHINE.md
