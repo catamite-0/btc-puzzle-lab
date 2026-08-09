@@ -367,7 +367,7 @@ def build_signed_transaction(
     tx_hex = ""
     send_amount = 0
     # Iterate: DER length can change vsize when the send amount / sighash changes.
-    for _ in range(4):
+    for _ in range(5):
         send_amount = total - fee
         if send_amount <= 0:
             return "", send_amount, fee
@@ -385,6 +385,20 @@ def build_signed_transaction(
         if actual_fee == fee:
             return tx_hex, send_amount, fee
         fee = actual_fee
+    # Last resort: keep conservation of value even if rate drifts by 1 sat/vB.
+    send_amount = total - fee
+    if send_amount <= 0 or not tx_hex:
+        return "", send_amount, fee
+    tx_hex = _assemble_signed_tx(
+        private_key_hex=private_key_hex,
+        selected=selected,
+        from_address=from_address,
+        to_address=to_address,
+        send_amount=send_amount,
+        addr_type=addr_type,
+        compressed=compressed,
+        rbf=rbf,
+    )
     return tx_hex, send_amount, fee
 
 

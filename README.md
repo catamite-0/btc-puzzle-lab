@@ -8,24 +8,31 @@ catalog → search engine → state/HITS.jsonl → local audit → optional swee
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-**Release:** `v0.4.0` — first-class solver toolchain (`engines install`)
+**Release:** `v0.4.1` — machine-ready bootstrap (`doctor` + BitCrack install)
 
 ## Quick start
+
+Local / CPU:
 
 ```bash
 python3 -m venv .venv-dev
 source .venv-dev/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install -e .
-
-# production solver path: build upstream keyhunt + kangaroo into ./bin/
-# (needs: git build-essential libssl-dev libgmp-dev)
 btc-puzzle-lab engines install
-btc-puzzle-lab engines
-
+btc-puzzle-lab doctor
 btc-puzzle-lab list
-btc-puzzle-lab verify 1
 btc-puzzle-lab run 1
+```
+
+GPU experiment pod (RunPod etc.):
+
+```bash
+git clone https://github.com/catamitez0-maker/btc-puzzle-lab.git
+cd btc-puzzle-lab
+bash scripts/machine-bootstrap.sh
+source .venv/bin/activate
+# details: docs/MACHINE.md
 ```
 
 From a tagged release / wheel:
@@ -33,7 +40,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.4.0"
+python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.4.1"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
@@ -229,7 +236,7 @@ btc-puzzle-lab engines                      # status
 |---|---|---|---|
 | `keyhunt` | `engines install` (albertobsd/keyhunt) | address | CPU address / range search |
 | `kangaroo` | `engines install` (JeanLucPons/Kangaroo, CPU) | compressed pubkey | Pollard kangaroo |
-| `bitcrack` | manual (CUDA/OpenCL) | address | GPU address brute-force |
+| `bitcrack` | `engines install` when `nvcc` present | address | GPU address brute-force |
 | `rckangaroo` | manual | compressed pubkey | faster kangaroo when present |
 
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to

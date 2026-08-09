@@ -19,6 +19,7 @@ from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
 from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL, import_catalog
 from btc_puzzle_lab.coverage import format_coverage, load_coverage
 from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
@@ -188,11 +189,17 @@ def cmd_engines(args: argparse.Namespace) -> int:
         hard_fail = [
             r
             for r in results
-            if not r.ok and r.name in {"keyhunt", "kangaroo"}
+            if not r.ok and r.name in {"keyhunt", "kangaroo", "bitcrack"}
         ]
         return 1 if hard_fail else 0
     print(format_engine_status())
     return 0
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    checks = run_doctor()
+    print(format_doctor(checks))
+    return 0 if doctor_ok(checks) else 1
 
 
 def cmd_coverage(args: argparse.Namespace) -> int:
@@ -547,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_engines = sub.add_parser(
         "engines",
-        help="list or install external solver toolchain (keyhunt/kangaroo)",
+        help="list or install external solver toolchain (keyhunt/kangaroo/bitcrack)",
     )
     eng_sub = p_engines.add_subparsers(dest="engines_action")
     p_eng_status = eng_sub.add_parser("status", help="show solver binary status (default)")
@@ -559,7 +566,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eng_install.add_argument(
         "--only",
         default=None,
-        help="comma-separated engines: keyhunt,kangaroo (default: both)",
+        help="comma-separated: keyhunt,kangaroo,bitcrack (default: CPU pair + bitcrack if nvcc)",
     )
     p_eng_install.add_argument(
         "--force",
@@ -577,6 +584,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="show environment-adaptive profile and recommended next actions",
     )
     p_adapt.set_defaults(func=cmd_adapt)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="preflight checks before a machine experiment session",
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_run = sub.add_parser("run", help="search / practice-run a puzzle and append HITS")
     p_run.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
