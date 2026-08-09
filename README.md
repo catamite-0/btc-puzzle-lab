@@ -10,6 +10,8 @@ This is a practice tool for **already-solved** catalog entries. It does **not** 
 
 **Release:** `v0.4.1` — machine-ready bootstrap (`doctor` + BitCrack install)
 
+**Public-pool adapter (optional):** `btc-puzzle-pool` is a separate, fail-closed adapter for the public btcpuzzle.info #38 test pool and #71 pool. The core `btc-puzzle-lab` commands remain the solved-puzzle practice lab. See [RunPod RTX 5090 pool guide](docs/RUNPOD_POOL.md).
+
 ## Quick start
 
 Local / CPU:
@@ -34,6 +36,17 @@ bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
 # details: docs/MACHINE.md
 ```
+
+Public #71 pool on a RunPod RTX 5090:
+
+```bash
+bash scripts/runpod-pool-bootstrap.sh
+source .venv/bin/activate
+btc-puzzle-pool test              # mandatory #38 end-to-end gate
+btc-puzzle-pool run --puzzle 71   # only after decrypting the #38 artifact locally
+```
+
+`btc-puzzle-lab run 71 --auto` is a standalone scan and does **not** join the pool. Secret setup, non-Spot requirements, and recovery limitations are documented in [docs/RUNPOD_POOL.md](docs/RUNPOD_POOL.md).
 
 From a tagged release / wheel:
 

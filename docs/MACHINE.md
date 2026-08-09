@@ -1,5 +1,7 @@
 # Machine experiment bootstrap
 
+> This page covers the standalone lab/solver board. To join the public btcpuzzle.info #71 pool on RTX 5090, use [RUNPOD_POOL.md](RUNPOD_POOL.md); `btc-puzzle-lab run 71 --auto` does not join that pool.
+
 Short path after a RunPod (or similar) GPU pod is up.
 
 ## 1. Deploy pod

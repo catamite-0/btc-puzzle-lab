@@ -40,6 +40,12 @@ only; they are not credentials.
 copies binaries into ignored `bin/`. Those upstream licenses apply; treat build
 outputs as local toolchains, not secrets — but do not commit them.
 
+## Public Pool adapter
+
+`btc-puzzle-pool` is an optional, separate adapter for the public btcpuzzle.info #38 test pool and #71 pool. It rejects arbitrary targets and ranges. Pool Token and RSA public key are injected at runtime through a mode-`0600` temporary config and removed from the child environment; the production RSA private key must remain off the Pod.
+
+The adapter patches the pinned external GPL client fail-closed, redacts process output, and persists only encrypted winner artifacts under ignored `state/pool/`. The official protocol has no checkpoint/resume API, so interrupted work cannot be resumed. Review [docs/RUNPOD_POOL.md](docs/RUNPOD_POOL.md) before using an unsolved public pool.
+
 ## Reporting
 
 If you find a way this tool prints private keys or signed transaction hex without

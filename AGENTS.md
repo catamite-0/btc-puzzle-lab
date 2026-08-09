@@ -19,6 +19,9 @@
 - Solver toolchain: `btc-puzzle-lab engines install` builds keyhunt + kangaroo
   (+ BitCrack when `nvcc` is present) into ignored `vendor/` + `bin/` and writes
   `config/engines.env`. Never commit those build outputs. RCKangaroo stays manual.
+- Public-pool adapter: `btc-puzzle-pool` is restricted to official #38/#71 and pins `ilkerccom/btcpuzzle` commit `025e2656fc5ff6f3e8ea51477b8374c8000ee366`. Do not add arbitrary target/range flags or claim checkpoint/resume support.
+- Pool secrets: never commit/log Pool Token, RSA material, decrypted results, `state/pool/`, `vendor/btcpuzzle-official/`, or `bin/btcpuzzle*`. Production RSA private keys stay off Pods.
+- Pool deployment: `scripts/runpod-pool-bootstrap.sh` + `docs/RUNPOD_POOL.md`; #38 must pass before #71. Keep the GPL client an external process and preserve its provenance/license.
 - Machine bootstrap: `scripts/machine-bootstrap.sh` + `docs/MACHINE.md`; preflight via `doctor`.
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.

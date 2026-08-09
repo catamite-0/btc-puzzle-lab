@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- Separate `btc-puzzle-pool install|doctor|test|run` adapter for the public btcpuzzle.info #38/#71 pools
+- Pinned official client commit with native RTX 5090 `sm_120` + `compute_120` build provenance
+- Strict RunPod bootstrap and `docs/RUNPOD_POOL.md` deployment/decryption runbook
+- #38 hardware/client verification marker bound to the exact binary hash and GPU capability
+
+### Security
+- Pool target addresses are fixed to the official #38/#71 values; arbitrary ranges and addresses are rejected
+- Token/RSA public key use an ephemeral `0600` config and are excluded from the child command line and logs
+- Upstream HTTP-success and RSA fail-open paths are patched fail-closed; encrypted winner files are copied live to persistent state
+
+### Known limitations
+- The official pool protocol exposes no checkpoint/resume/release API; interrupted #71 range progress is lost
+- #71 uses a 12-hour reassignment window, so Spot/preemptible Pods are unsupported
+
 ## [0.4.1] — 2026-08-09
 
 Machine-ready polish for experiment pods.

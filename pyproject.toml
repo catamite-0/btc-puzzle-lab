@@ -41,6 +41,7 @@ Changelog = "https://github.com/catamitez0-maker/btc-puzzle-lab/blob/main/CHANGE
 
 [project.scripts]
 btc-puzzle-lab = "btc_puzzle_lab.cli:main"
+btc-puzzle-pool = "btc_puzzle_lab.pool:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
