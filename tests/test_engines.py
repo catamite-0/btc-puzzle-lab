@@ -2,7 +2,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from btc_puzzle_lab.catalog import get_puzzle
+from btc_puzzle_lab.crypto import compressed_pubkey, privkey_bytes
 from btc_puzzle_lab.engines import (
+    _append_result_files,
     _solver_env,
     parse_privkey_text,
     redact_engine_line,
@@ -16,6 +18,18 @@ def test_parse_privkey_text_common_formats():
     assert parse_privkey_text("PRIVATE KEY: 0000000000000000000000000000000000000000000000000000000000000015") == 0x15
     assert parse_privkey_text("Priv: 0xd2c55") == 0xD2C55
     assert parse_privkey_text("no key here") is None
+
+
+def test_parse_privkey_text_bitcrack_result_requires_expected_address():
+    address = "1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum"
+    private_key = f"{0xD2C55:064x}"
+    public_key = "02" + ("ab" * 32)
+    result_line = f"{address} {private_key} {public_key}"
+
+    assert parse_privkey_text(result_line, expected_address=address) == 0xD2C55
+    assert parse_privkey_text(result_line) is None
+    assert parse_privkey_text(result_line, expected_address="1WrongAddress") is None
+    assert parse_privkey_text(f"Starting at: {private_key}", expected_address=address) is None
 
 
 def test_resolve_binary_respects_env(tmp_path: Path, monkeypatch):
@@ -44,6 +58,32 @@ def test_run_external_parses_hit(tmp_path: Path, monkeypatch):
     result = run_external_engine(puzzle, "keyhunt", threads=1)
     assert result.secret == 0x15
     assert result.engine == "keyhunt"
+
+
+def test_run_external_parses_bitcrack_result_file(tmp_path: Path):
+    puzzle = get_puzzle(20)
+    private_key = f"{0xD2C55:064x}"
+    public_key = compressed_pubkey(privkey_bytes(private_key)).hex()
+    work = tmp_path / "bitcrack-work"
+    work.mkdir()
+    (work / "found.txt").write_text(
+        f"{puzzle.address} {private_key} {public_key}\n",
+        encoding="utf-8",
+    )
+    output = _append_result_files(work, "solver stdout\n")
+
+    with (
+        patch("btc_puzzle_lab.engines.resolve_binary", return_value=tmp_path / "cuBitCrack"),
+        patch(
+            "btc_puzzle_lab.engines._cmd_bitcrack",
+            return_value=(["cuBitCrack"], work),
+        ),
+        patch("btc_puzzle_lab.engines._run", return_value=(0, output)),
+    ):
+        result = run_external_engine(puzzle, "bitcrack", progress=False)
+
+    assert result.secret == 0xD2C55
+    assert result.engine == "bitcrack"
 
 
 def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):

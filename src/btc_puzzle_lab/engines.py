@@ -30,6 +30,11 @@ _PRIVATE_KEY_LINE_RE = re.compile(
     r"(?i)((?:private\s*key|privkey|priv)\s*:?\s*)(?:0x)?[0-9a-f]{1,64}"
 )
 _BARE_SECRET_RE = re.compile(r"(?i)\b(?:0x)?[0-9a-f]{64}\b")
+_BITCRACK_RESULT_RE = re.compile(
+    r"^(?P<address>\S+)\s+"
+    r"(?P<private>[0-9a-fA-F]{64})\s+"
+    r"(?P<public>(?:(?:02|03)[0-9a-fA-F]{64}|04[0-9a-fA-F]{128}))\s*$"
+)
 _SOLVER_ENV_ALLOWLIST = {
     "COMSPEC",
     "CUDA_HOME",
@@ -139,18 +144,24 @@ def available_engines() -> list[str]:
     return [name for name in ENGINES if resolve_binary(name) is not None]
 
 
-def parse_privkey_text(text: str) -> int | None:
+def parse_privkey_text(text: str, *, expected_address: str | None = None) -> int | None:
     """Extract a private key int from solver stdout/stderr/result files."""
     for line in text.splitlines():
         lower = line.lower()
-        if not any(token in lower for token in ("private key", "privkey", "priv:", "priv ")):
-            continue
-        for match in _HEX_KEY.finditer(line.replace(":", " ")):
-            token = match.group(2)
-            try:
-                return int(normalize_privkey_hex(token), 16)
-            except ValueError:
-                continue
+        if any(token in lower for token in ("private key", "privkey", "priv:", "priv ")):
+            for match in _HEX_KEY.finditer(line.replace(":", " ")):
+                token = match.group(2)
+                try:
+                    return int(normalize_privkey_hex(token), 16)
+                except ValueError:
+                    continue
+        if expected_address is not None:
+            match = _BITCRACK_RESULT_RE.fullmatch(line.strip())
+            if match is not None and match.group("address") == expected_address:
+                try:
+                    return int(normalize_privkey_hex(match.group("private")), 16)
+                except ValueError:
+                    continue
     return None
 
 
@@ -401,7 +412,7 @@ def run_external_engine(
         except OSError:
             pass
 
-    secret = parse_privkey_text(output)
+    secret = parse_privkey_text(output, expected_address=puzzle.address)
     if secret is None:
         detail = f"{engine} exited {code}; no private key parsed"
         if code == 124:
