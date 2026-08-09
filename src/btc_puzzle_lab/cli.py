@@ -32,7 +32,13 @@ from btc_puzzle_lab.strategy import (
 )
 from btc_puzzle_lab.summary import build_summary, format_summary
 from btc_puzzle_lab.toolchain import format_install_results, install_engines
-from btc_puzzle_lab.transfer import TransferResult, sweep_hit, verify_dry_run_file
+from btc_puzzle_lab.transfer import (
+    TransferResult,
+    broadcast_dry_run_file,
+    format_transfer_policy,
+    sweep_hit,
+    verify_dry_run_file,
+)
 
 _ENGINE_CHOICES = [
     "sequential",
@@ -47,10 +53,12 @@ _ENGINE_CHOICES = [
 
 def _print_transfer(result: TransferResult) -> None:
     print(f"transfer[{result.status}]: {result.message}")
+    if result.dest_addr:
+        print(f"  dest={result.dest_addr}")
     if result.send_amount is not None:
         print(
             f"  send_amount={result.send_amount} sats fee={result.fee} "
-            f"fee_rate={result.fee_rate}"
+            f"fee_rate={result.fee_rate} vsize={result.vsize}"
         )
     if result.input_count is not None:
         print(f"  inputs={result.input_count} rbf={result.rbf}")
@@ -60,6 +68,8 @@ def _print_transfer(result: TransferResult) -> None:
         print(f"  dry_run_path={result.dry_run_path}")
     if result.txid:
         print(f"  txid={result.txid}")
+    if result.chain_status:
+        print(f"  chain_status={result.chain_status}")
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -245,6 +255,15 @@ def cmd_transfer(args: argparse.Namespace) -> int:
         for err in errors:
             print(f"config error: {err}", file=sys.stderr)
         return 2
+    print(f"policy: {format_transfer_policy(settings)}")
+    if args.broadcast_dry_run:
+        result = broadcast_dry_run_file(args.broadcast_dry_run, settings=settings)
+        _print_transfer(result)
+        if result.status == "broadcast":
+            return 0
+        if result.status == "skipped":
+            return 3
+        return 1
     hits = read_hits()
     if not hits:
         print(f"no hits in {HITS_FILE}")
@@ -258,14 +277,24 @@ def cmd_transfer(args: argparse.Namespace) -> int:
     else:
         hit = hits[-1]
     print(f"sweeping puzzle #{hit.puzzle_id} address={hit.address}")
-    result = sweep_hit(hit, settings=settings)
+    confirmed_only = None if not args.allow_unconfirmed else False
+    result = sweep_hit(
+        hit,
+        settings=settings,
+        fee_rate=args.fee_rate,
+        confirmed_only=confirmed_only,
+    )
     _print_transfer(result)
     if result.status == "dry_run" and result.dry_run_path and args.verify_dry_run:
-        verify = verify_dry_run_file(result.dry_run_path)
+        verify = verify_dry_run_file(
+            result.dry_run_path,
+            expected_dest=settings.dest_addr or None,
+            min_send_sats=settings.min_send_sats,
+        )
         print(
             f"dry-run verify: {'OK' if verify.ok else 'FAIL'} — {verify.message} "
             f"(inputs={verify.input_count} outputs={verify.output_count} "
-            f"size={verify.size_bytes})"
+            f"vsize={verify.vsize} dest={verify.dest_addr} send={verify.send_amount})"
         )
         if not verify.ok:
             return 1
@@ -278,15 +307,23 @@ def cmd_transfer(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_dry_run(args: argparse.Namespace) -> int:
-    result = verify_dry_run_file(args.path)
+    settings = get_transfer_settings()
+    result = verify_dry_run_file(
+        args.path,
+        expected_dest=(settings.dest_addr or None) if args.check_dest else None,
+        min_send_sats=settings.min_send_sats if args.check_dest else None,
+    )
     print(f"[{'OK' if result.ok else 'FAIL'}] {result.message}")
     print(f"  path={result.path}")
     if result.fingerprint:
         print(f"  fingerprint={result.fingerprint}")
+    if result.dest_addr:
+        print(f"  dest={result.dest_addr} send_amount={result.send_amount}")
     if result.version is not None:
         print(
             f"  version={result.version} inputs={result.input_count} "
-            f"outputs={result.output_count} size_bytes={result.size_bytes}"
+            f"outputs={result.output_count} size_bytes={result.size_bytes} "
+            f"vsize={result.vsize}"
         )
     return 0 if result.ok else 1
 
@@ -664,6 +701,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="puzzle id to sweep (default: latest hit)",
     )
     p_transfer.add_argument(
+        "--fee-rate",
+        type=int,
+        default=None,
+        help="override fee rate sat/vB for this sweep",
+    )
+    p_transfer.add_argument(
+        "--allow-unconfirmed",
+        action="store_true",
+        help="include unconfirmed UTXOs (default: confirmed only)",
+    )
+    p_transfer.add_argument(
+        "--broadcast-dry-run",
+        type=str,
+        default=None,
+        help="broadcast an existing dry-run .txhex (requires live confirm + dry_run=false)",
+    )
+    p_transfer.add_argument(
         "--verify-dry-run",
         action="store_true",
         help="after dry-run, structurally verify the written .txhex artifact",
@@ -675,6 +729,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="structurally verify a dry-run .txhex file (never prints hex)",
     )
     p_vdr.add_argument("path", type=str, help="path to dryrun_*.txhex")
+    p_vdr.add_argument(
+        "--check-dest",
+        action="store_true",
+        help="also assert output matches AUTO_TRANSFER_DEST_ADDR / min send",
+    )
     p_vdr.set_defaults(func=cmd_verify_dry_run)
 
     p_summary = sub.add_parser("summary", help="show local pipeline summary")

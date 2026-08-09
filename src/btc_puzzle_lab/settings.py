@@ -41,6 +41,8 @@ class TransferSettings:
     fee_strategy: str = "normal"
     fee_target_blocks: int = 2
     rbf: bool = True
+    confirmed_only: bool = True
+    max_fee_sats: int = 100_000
 
     @property
     def live_ok(self) -> bool:
@@ -74,6 +76,8 @@ def get_transfer_settings() -> TransferSettings:
         fee_strategy=strategy,
         fee_target_blocks=_env_int("AUTO_TRANSFER_FEE_TARGET_BLOCKS", 2, minimum=1),
         rbf=_env_bool("AUTO_TRANSFER_RBF", True),
+        confirmed_only=_env_bool("AUTO_TRANSFER_CONFIRMED_ONLY", True),
+        max_fee_sats=_env_int("AUTO_TRANSFER_MAX_FEE_SATS", 100_000, minimum=1),
     )
     if settings.default_fee_rate > settings.max_fee_rate:
         raise ValueError("AUTO_TRANSFER_DEFAULT_FEE_RATE exceeds AUTO_TRANSFER_MAX_FEE_RATE")
