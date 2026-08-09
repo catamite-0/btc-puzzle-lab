@@ -6,6 +6,7 @@ Transfer stays behind existing AUTO_TRANSFER_* safety gates (disabled + dry-run)
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -105,6 +106,7 @@ def run_once(
     check_balance: bool = False,
     transfer: bool = True,
     progress: bool = True,
+    timeout: float | None = None,
     plan_path: Path | None = None,
     host: HostProfile | None = None,
 ) -> LoopResult:
@@ -184,6 +186,7 @@ def run_once(
         include_blocked=False,
         progress=progress,
         plan_path=target,
+        timeout=timeout,
     )
 
     audits: list[AuditResult] = []
@@ -273,4 +276,128 @@ def format_loop_result(result: LoopResult) -> str:
     for item in result.transfers:
         lines.append(f"transfer[{item.status}]: {item.message}")
     lines.append(result.message)
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class WatchResult:
+    passes: int
+    hits: int
+    stopped_reason: str
+    last: LoopResult | None
+    results: tuple[LoopResult, ...] = ()
+
+
+def run_watch(
+    *,
+    max_hours: float | None = None,
+    max_passes: int | None = None,
+    idle_sleep: float = 30.0,
+    sync_every: int = 1,
+    stop_on_hit: bool = True,
+    timeout: float | None = None,
+    sync: bool = True,
+    status: str = "unsolved",
+    bits_min: int | None = 32,
+    bits_max: int | None = None,
+    puzzle_ids: list[int] | None = None,
+    limit: int = 1,
+    resource: ResourceFilter = "auto",
+    require_doctor: bool = True,
+    audit: bool = True,
+    check_balance: bool = False,
+    transfer: bool = True,
+    progress: bool = True,
+    plan_path: Path | None = None,
+    host: HostProfile | None = None,
+) -> WatchResult:
+    """Repeat ``run_once`` until hit, budget, or idle exhaustion.
+
+    For a dedicated 5090 VPS hunting one unsolved puzzle, prefer a single
+    ``once`` with no timeout (BitCrack holds the GPU). Use ``watch`` when you
+    want budgeted passes or to re-sync after short practice/CPU jobs.
+    """
+    deadline = (
+        time.monotonic() + max_hours * 3600.0
+        if max_hours is not None and max_hours > 0
+        else None
+    )
+    passes = 0
+    hits = 0
+    collected: list[LoopResult] = []
+    reason = "completed"
+    while True:
+        if max_passes is not None and passes >= max_passes:
+            reason = "max_passes"
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            reason = "max_hours"
+            break
+
+        pass_timeout = timeout
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reason = "max_hours"
+                break
+            pass_timeout = remaining if pass_timeout is None else min(pass_timeout, remaining)
+
+        do_sync = sync and (sync_every <= 1 or passes % sync_every == 0)
+        result = run_once(
+            sync=do_sync,
+            status=status,
+            bits_min=bits_min,
+            bits_max=bits_max,
+            puzzle_ids=puzzle_ids,
+            limit=limit,
+            stop_on_hit=stop_on_hit,
+            resource=resource,
+            require_doctor=require_doctor,
+            audit=audit,
+            check_balance=check_balance,
+            transfer=transfer,
+            progress=progress,
+            timeout=pass_timeout,
+            plan_path=plan_path,
+            host=host,
+        )
+        collected.append(result)
+        passes += 1
+        hits += result.hits
+        log_event(
+            "watch_pass",
+            pass_no=passes,
+            hits=result.hits,
+            selected=result.selected_ids,
+            message=result.message,
+        )
+        if result.hits and stop_on_hit:
+            reason = "hit"
+            break
+        if not result.selected_ids:
+            if deadline is None and max_passes is None:
+                reason = "idle"
+                break
+            time.sleep(max(0.0, idle_sleep))
+            continue
+        # External engine finished without a hit (or timed out): brief pause
+        # then claim the same slot again unless budgets say stop.
+        time.sleep(max(0.0, min(idle_sleep, 5.0)))
+
+    log_event("watch_complete", passes=passes, hits=hits, reason=reason)
+    return WatchResult(
+        passes=passes,
+        hits=hits,
+        stopped_reason=reason,
+        last=collected[-1] if collected else None,
+        results=tuple(collected),
+    )
+
+
+def format_watch_result(result: WatchResult) -> str:
+    lines = [
+        f"watch passes={result.passes} hits={result.hits} stopped={result.stopped_reason}",
+    ]
+    if result.last is not None:
+        lines.append(format_loop_result(result.last))
     return "\n".join(lines)

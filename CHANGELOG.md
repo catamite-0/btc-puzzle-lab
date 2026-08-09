@@ -10,10 +10,13 @@ Full-loop orchestrator for VPS hosts (CPU/GPU resource slots).
 
 ### Added
 - `btc-puzzle-lab once`: sync unsolved → plan → exclusive resource slot → audit → optional sweep
+- `btc-puzzle-lab watch`: repeat `once` with `--max-hours` / `--max-passes` budgets
 - Job `resource` tag (`cpu` / `gpu`) from strategy engine class
 - `docs/LOOP.md` and RTX 5090-oriented `docs/MACHINE.md` guidance
 - BitCrack makefile dual SASS/PTX gencode helper (`build_gencode`) for arches like `sm_120`
 - Doctor advisory check when a GPU host is missing BitCrack
+- Streaming redacted external-solver logs + optional timeout (`--max-seconds`)
+- BitCrack device/grid env knobs (`BTC_PUZZLE_LAB_GPU_INDEX`, `_BITCRACK_BLOCKS/THREADS/POINTS`)
 
 ### Changed
 - GPU VPS default remains one puzzle per card (`once --limit 1`)

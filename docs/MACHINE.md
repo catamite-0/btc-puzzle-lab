@@ -50,12 +50,23 @@ Confirm compute capability shows **12.0** (reported as `120`) on 5090.
 ## 4. Run the loop (recommended)
 
 ```bash
-# exclusive GPU slot on lowest ready unsolved (usually #71 after import)
-btc-puzzle-lab once --resource gpu
-
-# or pin explicitly:
+# exclusive GPU slot — pin #71 and let BitCrack hold the card
 btc-puzzle-lab once --ids 71 --resource gpu
+
+# optional budgeted session (auto-stops at wall clock):
+# btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6
 ```
+
+Optional BitCrack tuning (env):
+
+| Env | Purpose |
+|---|---|
+| `BTC_PUZZLE_LAB_GPU_INDEX` | CUDA device index (`-d`) |
+| `BTC_PUZZLE_LAB_BITCRACK_BLOCKS` | `-b` |
+| `BTC_PUZZLE_LAB_BITCRACK_THREADS` | `-t` |
+| `BTC_PUZZLE_LAB_BITCRACK_POINTS` | `-p` |
+
+Start without grid overrides; only tune if `nvidia-smi` shows the card under-used.
 
 Manual board (same strategy under the hood):
 

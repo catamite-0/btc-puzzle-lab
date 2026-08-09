@@ -22,7 +22,7 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
-from btc_puzzle_lab.loop import format_loop_result, run_once
+from btc_puzzle_lab.loop import format_loop_result, format_watch_result, run_once, run_watch
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
@@ -435,14 +435,23 @@ def cmd_adapt(_: argparse.Namespace) -> int:
     return 0
 
 
+def _loop_ids(args: argparse.Namespace) -> list[int] | None:
+    return [int(part) for part in args.ids.split(",")] if args.ids else None
+
+
+def _loop_timeout(args: argparse.Namespace) -> float | None:
+    if getattr(args, "max_seconds", None) is not None:
+        return float(args.max_seconds)
+    return None
+
+
 def cmd_once(args: argparse.Namespace) -> int:
-    ids = [int(part) for part in args.ids.split(",")] if args.ids else None
     result = run_once(
         sync=not args.no_sync,
         status=args.status,
         bits_min=args.bits_min,
         bits_max=args.bits_max,
-        puzzle_ids=ids,
+        puzzle_ids=_loop_ids(args),
         limit=args.limit,
         stop_on_hit=not args.no_stop_on_hit,
         resource=args.resource,
@@ -451,11 +460,44 @@ def cmd_once(args: argparse.Namespace) -> int:
         check_balance=args.balance,
         transfer=not args.no_transfer,
         progress=not args.no_progress,
+        timeout=_loop_timeout(args),
     )
     print(format_loop_result(result))
     for item in result.transfers:
         _print_transfer(item)
     return 0 if result.ok else 1
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    result = run_watch(
+        max_hours=args.max_hours,
+        max_passes=args.max_passes,
+        idle_sleep=args.idle_sleep,
+        sync_every=args.sync_every,
+        stop_on_hit=not args.no_stop_on_hit,
+        timeout=_loop_timeout(args),
+        sync=not args.no_sync,
+        status=args.status,
+        bits_min=args.bits_min,
+        bits_max=args.bits_max,
+        puzzle_ids=_loop_ids(args),
+        limit=args.limit,
+        resource=args.resource,
+        require_doctor=not args.no_doctor,
+        audit=not args.no_audit,
+        check_balance=args.balance,
+        transfer=not args.no_transfer,
+        progress=not args.no_progress,
+    )
+    print(format_watch_result(result))
+    if result.last is not None:
+        for item in result.last.transfers:
+            _print_transfer(item)
+    if result.stopped_reason == "hit":
+        return 0
+    if result.last is not None and not result.last.ok:
+        return 1
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -782,6 +824,75 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_summary.set_defaults(func=cmd_summary)
 
+    def _add_loop_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--no-sync",
+            action="store_true",
+            help="skip catalog import (use current workspace catalog)",
+        )
+        parser.add_argument(
+            "--status",
+            choices=["all", "solved", "unsolved"],
+            default="unsolved",
+            help="catalog status filter for planning (default: unsolved)",
+        )
+        parser.add_argument("--bits-min", type=int, default=32)
+        parser.add_argument("--bits-max", type=int, default=None)
+        parser.add_argument(
+            "--ids",
+            type=str,
+            default=None,
+            help="comma-separated puzzle ids (e.g. 71)",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            default=1,
+            help="max puzzles for this host pass (default: 1 = exclusive slot)",
+        )
+        parser.add_argument(
+            "--resource",
+            choices=["auto", "cpu", "gpu", "any"],
+            default="auto",
+            help="resource queue (default: auto → gpu on GPU hosts)",
+        )
+        parser.add_argument(
+            "--no-stop-on-hit",
+            action="store_true",
+            help="keep going after a hit within --limit",
+        )
+        parser.add_argument(
+            "--no-doctor",
+            action="store_true",
+            help="skip blocking doctor gate",
+        )
+        parser.add_argument(
+            "--no-audit",
+            action="store_true",
+            help="skip post-hit address verification",
+        )
+        parser.add_argument(
+            "--balance",
+            action="store_true",
+            help="also query chain balance during audit",
+        )
+        parser.add_argument(
+            "--no-transfer",
+            action="store_true",
+            help="skip sweep attempt (still records hits)",
+        )
+        parser.add_argument(
+            "--no-progress",
+            action="store_true",
+            help="quiet search progress",
+        )
+        parser.add_argument(
+            "--max-seconds",
+            type=float,
+            default=None,
+            help="stop an external solver after N seconds (SIGTERM)",
+        )
+
     p_once = sub.add_parser(
         "once",
         help=(
@@ -789,68 +900,39 @@ def build_parser() -> argparse.ArgumentParser:
             "audit → optional dry-run transfer"
         ),
     )
-    p_once.add_argument(
-        "--no-sync",
-        action="store_true",
-        help="skip catalog import (use current workspace catalog)",
+    _add_loop_args(p_once)
+    p_once.set_defaults(func=cmd_once)
+
+    p_watch = sub.add_parser(
+        "watch",
+        help="repeat once until hit / max-hours / max-passes / idle",
     )
-    p_once.add_argument(
-        "--status",
-        choices=["all", "solved", "unsolved"],
-        default="unsolved",
-        help="catalog status filter for planning (default: unsolved)",
-    )
-    p_once.add_argument("--bits-min", type=int, default=32)
-    p_once.add_argument("--bits-max", type=int, default=None)
-    p_once.add_argument(
-        "--ids",
-        type=str,
+    _add_loop_args(p_watch)
+    p_watch.add_argument(
+        "--max-hours",
+        type=float,
         default=None,
-        help="comma-separated puzzle ids (e.g. 71)",
+        help="stop watch after this many hours (also caps solver timeout)",
     )
-    p_once.add_argument(
-        "--limit",
+    p_watch.add_argument(
+        "--max-passes",
+        type=int,
+        default=None,
+        help="stop after N once passes",
+    )
+    p_watch.add_argument(
+        "--idle-sleep",
+        type=float,
+        default=30.0,
+        help="seconds to sleep when no ready job (default: 30)",
+    )
+    p_watch.add_argument(
+        "--sync-every",
         type=int,
         default=1,
-        help="max puzzles for this host pass (default: 1 = exclusive slot)",
+        help="import-catalog every N passes (default: 1)",
     )
-    p_once.add_argument(
-        "--resource",
-        choices=["auto", "cpu", "gpu", "any"],
-        default="auto",
-        help="resource queue (default: auto → gpu on GPU hosts)",
-    )
-    p_once.add_argument(
-        "--no-stop-on-hit",
-        action="store_true",
-        help="keep going after a hit within --limit",
-    )
-    p_once.add_argument(
-        "--no-doctor",
-        action="store_true",
-        help="skip blocking doctor gate",
-    )
-    p_once.add_argument(
-        "--no-audit",
-        action="store_true",
-        help="skip post-hit address verification",
-    )
-    p_once.add_argument(
-        "--balance",
-        action="store_true",
-        help="also query chain balance during audit",
-    )
-    p_once.add_argument(
-        "--no-transfer",
-        action="store_true",
-        help="skip sweep attempt (still records hits)",
-    )
-    p_once.add_argument(
-        "--no-progress",
-        action="store_true",
-        help="quiet search progress",
-    )
-    p_once.set_defaults(func=cmd_once)
+    p_watch.set_defaults(func=cmd_watch)
 
     return parser
 

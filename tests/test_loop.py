@@ -1,7 +1,12 @@
 from btc_puzzle_lab.batch import build_plan
 from btc_puzzle_lab.catalog import Puzzle
 from btc_puzzle_lab.cli import main
-from btc_puzzle_lab.loop import resolve_resource_filter, run_once, select_ready_jobs
+from btc_puzzle_lab.loop import (
+    resolve_resource_filter,
+    run_once,
+    run_watch,
+    select_ready_jobs,
+)
 from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.strategy import HostProfile
 
@@ -93,6 +98,30 @@ def test_run_once_practice_hit_audits_without_transfer_config(tmp_path, monkeypa
     assert result.transfers
     assert result.transfers[0].status == "skipped"
     assert result.ok is True
+
+
+def test_run_watch_stops_on_hit(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_watch(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=True,
+        transfer=False,
+        progress=False,
+        max_passes=3,
+        idle_sleep=0.0,
+        host=host,
+    )
+    assert result.stopped_reason == "hit"
+    assert result.hits == 1
+    assert result.passes == 1
 
 
 def test_cli_once_idle_gpu_without_ready_jobs(tmp_path, monkeypatch):

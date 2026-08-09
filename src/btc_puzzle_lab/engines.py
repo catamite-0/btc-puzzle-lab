@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
+import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +26,9 @@ from btc_puzzle_lab.crypto import normalize_privkey_hex
 from btc_puzzle_lab.paths import workspace_root
 
 _HEX_KEY = re.compile(r"\b(0x)?([0-9a-fA-F]{1,64})\b")
+_PRIVATE_KEY_LINE_RE = re.compile(
+    r"(?i)((?:private\s*key|privkey|priv)\s*:?\s*)(?:0x)?[0-9a-f]{1,64}"
+)
 
 
 @dataclass(frozen=True)
@@ -127,16 +133,102 @@ def parse_privkey_text(text: str) -> int | None:
     return None
 
 
-def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str]:
-    print("running:", " ".join(cmd), flush=True)
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
-    output = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    # Some solvers also write RESULTS.TXT / similar beside cwd.
+def redact_engine_line(line: str) -> str:
+    """Strip plaintext private-key material before printing solver logs."""
+    return _PRIVATE_KEY_LINE_RE.sub(r"\1[REDACTED]", line)
+
+
+def _append_result_files(cwd: Path, output: str) -> str:
     for name in ("RESULTS.TXT", "Result.txt", "KEYFOUND.key", "Found.txt", "found.txt"):
         path = cwd / name
         if path.is_file():
             output += "\n" + path.read_text(encoding="utf-8", errors="ignore")
-    return proc.returncode, output
+    return output
+
+
+def _run(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    timeout: float | None = None,
+    progress: bool = True,
+) -> tuple[int, str]:
+    """Stream solver output (redacted) so long GPU runs do not buffer forever."""
+    print("running:", " ".join(cmd), flush=True)
+    chunks: list[str] = []
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return 127, f"failed to start solver: {exc}"
+
+    assert proc.stdout is not None
+    deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
+    timed_out = False
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                timed_out = True
+                break
+            wait = 0.25
+            if deadline is not None:
+                wait = max(0.01, min(wait, deadline - time.monotonic()))
+            events = selector.select(timeout=wait)
+            if not events:
+                if proc.poll() is not None:
+                    # Drain any trailing bytes after exit.
+                    rest = proc.stdout.read()
+                    if rest:
+                        chunks.append(rest)
+                        if progress:
+                            print(redact_engine_line(rest), end="", flush=True)
+                    break
+                continue
+            line = proc.stdout.readline()
+            if line == "":
+                if proc.poll() is not None:
+                    break
+                continue
+            chunks.append(line)
+            if progress:
+                print(redact_engine_line(line), end="", flush=True)
+        if timed_out and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait(timeout=5)
+    finally:
+        selector.close()
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait(timeout=5)
+
+    output = "".join(chunks)
+    output = _append_result_files(cwd, output)
+    code = 124 if timed_out else int(proc.returncode if proc.returncode is not None else 1)
+    if timed_out:
+        output += "\n[btc-puzzle-lab] engine stopped: timeout reached"
+    return code, output
 
 
 def _cmd_keyhunt(binary: Path, puzzle: Puzzle, *, threads: int) -> tuple[list[str], Path]:
@@ -194,15 +286,21 @@ def _cmd_bitcrack(binary: Path, puzzle: Puzzle) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-bc-"))
     out = tmp / "found.txt"
     keyspace = f"{puzzle.range_start:x}:{puzzle.range_end:x}"
-    cmd = [
-        str(binary),
-        "-c",
-        "--keyspace",
-        keyspace,
-        "-o",
-        str(out),
-        puzzle.address,
-    ]
+    cmd = [str(binary), "-c"]
+    # Optional device / grid knobs for VPS tuning (safe defaults when unset).
+    device = os.environ.get("BTC_PUZZLE_LAB_GPU_INDEX", "").strip()
+    blocks = os.environ.get("BTC_PUZZLE_LAB_BITCRACK_BLOCKS", "").strip()
+    threads = os.environ.get("BTC_PUZZLE_LAB_BITCRACK_THREADS", "").strip()
+    points = os.environ.get("BTC_PUZZLE_LAB_BITCRACK_POINTS", "").strip()
+    if device.isdigit():
+        cmd += ["-d", device]
+    if blocks.isdigit():
+        cmd += ["-b", blocks]
+    if threads.isdigit():
+        cmd += ["-t", threads]
+    if points.isdigit():
+        cmd += ["-p", points]
+    cmd += ["--keyspace", keyspace, "-o", str(out), puzzle.address]
     return cmd, tmp
 
 
@@ -212,6 +310,8 @@ def run_external_engine(
     *,
     threads: int = 2,
     dp: int = 16,
+    timeout: float | None = None,
+    progress: bool = True,
 ) -> ExternalEngineResult:
     if engine not in ENGINES:
         return ExternalEngineResult(engine, None, f"unknown external engine: {engine}")
@@ -241,7 +341,7 @@ def run_external_engine(
     }
     cmd, cwd = builders[engine]()
     try:
-        code, output = _run(cmd, cwd=cwd)
+        code, output = _run(cmd, cwd=cwd, timeout=timeout, progress=progress)
     finally:
         # Best-effort cleanup; ignore failures on busy filesystems.
         for path in sorted(cwd.rglob("*"), reverse=True):
@@ -256,12 +356,10 @@ def run_external_engine(
 
     secret = parse_privkey_text(output)
     if secret is None:
-        return ExternalEngineResult(
-            engine,
-            None,
-            f"{engine} exited {code}; no private key parsed",
-            tuple(cmd),
-        )
+        detail = f"{engine} exited {code}; no private key parsed"
+        if code == 124:
+            detail = f"{engine} timed out; no private key parsed"
+        return ExternalEngineResult(engine, None, detail, tuple(cmd))
     return ExternalEngineResult(engine, secret, "hit from external engine", tuple(cmd))
 
 

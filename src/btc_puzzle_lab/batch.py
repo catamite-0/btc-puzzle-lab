@@ -259,6 +259,7 @@ def run_batch(
     include_blocked: bool = False,
     progress: bool = True,
     plan_path: Path | None = None,
+    timeout: float | None = None,
 ) -> BatchRunResult:
     from btc_puzzle_lab.catalog import get_puzzle
 
@@ -338,6 +339,7 @@ def run_batch(
                 order=job.order,
                 max_chunks=job.max_chunks,
                 dp=job.dp,
+                timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001 — batch continues
             errors += 1

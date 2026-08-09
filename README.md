@@ -73,6 +73,7 @@ import-catalog → plan → batch → status → audit → transfer
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
+| `watch` | Repeat `once` with hour/pass budgets |
 | `import-catalog` | Load full catalog into workspace `data/puzzles.json` |
 | `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
 | `batch` | Execute ready jobs (limit / resume / stop-on-hit) |
