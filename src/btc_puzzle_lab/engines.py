@@ -277,7 +277,7 @@ def format_engine_status() -> str:
         mark = "yes" if path else "no"
         if path:
             shown = str(path)
-        elif name in {"keyhunt", "kangaroo"}:
+        elif name in {"keyhunt", "kangaroo", "bitcrack"}:
             shown = f"(run: btc-puzzle-lab engines install --only {name})"
         else:
             shown = f"(manual: set {spec.env_var})"

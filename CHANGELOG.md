@@ -4,15 +4,21 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-09
+
+Machine-ready polish for experiment pods.
+
 ### Added
-- Transfer landing: confirmed-only UTXOs, fee-from-signed-vsize, `MAX_FEE_SATS`,
-  enriched dry-run verify (dest/amount), post-broadcast chain status,
-  `transfer --broadcast-dry-run` / `--fee-rate` / `--allow-unconfirmed`,
-  and `docs/TRANSFER.md` runbook
-- UTXO/fee explorer failover (Blockstream ↔ mempool.space)
+- `engines install` builds **BitCrack** (`cuBitCrack`) when `nvcc` is present
+  (auto `CUDA_HOME` / `COMPUTE_CAP` makefile patch)
+- `btc-puzzle-lab doctor` preflight
+- `scripts/machine-bootstrap.sh` + `docs/MACHINE.md` one-shot pod setup
+- Transfer landing (from 0.4.0 unreleased work): confirmed-only UTXOs,
+  fee-from-signed-vsize, `MAX_FEE_SATS`, enriched dry-run verify,
+  broadcast failover/status, `transfer --broadcast-dry-run`, `docs/TRANSFER.md`
 
 ### Changed
-- Agent notes keep engineering focus only (algorithms, catalog, toolchain)
+- Default `engines install` set: keyhunt + kangaroo (+ bitcrack if CUDA)
 
 ## [0.4.0] — 2026-08-08
 

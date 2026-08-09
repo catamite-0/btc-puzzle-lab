@@ -24,14 +24,12 @@ KEYHUNT_REPO = os.environ.get(
 KANGAROO_REPO = os.environ.get(
     "BTC_PUZZLE_LAB_KANGAROO_REPO", "https://github.com/JeanLucPons/Kangaroo.git"
 )
+BITCRACK_REPO = os.environ.get(
+    "BTC_PUZZLE_LAB_BITCRACK_REPO", "https://github.com/brichard19/BitCrack.git"
+)
 
-INSTALLABLE = ("keyhunt", "kangaroo")
+INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack")
 MANUAL_ONLY = {
-    "bitcrack": (
-        "BitCrack needs CUDA/OpenCL toolchain; build "
-        "https://github.com/brichard19/BitCrack then place cuBitCrack under bin/ "
-        "or set BITCRACK_PATH"
-    ),
     "rckangaroo": (
         "RCKangaroo is not auto-built here; place RCKangaroo under bin/ "
         "or set RCKANGAROO_PATH"
@@ -78,6 +76,66 @@ def _which_ok(name: str) -> bool:
 def missing_build_tools() -> list[str]:
     needed = ["git", "make", "g++"]
     return [name for name in needed if not _which_ok(name)]
+
+
+def cuda_available() -> bool:
+    return _which_ok("nvcc") or Path("/usr/local/cuda/bin/nvcc").is_file()
+
+
+def detect_cuda_home() -> Path | None:
+    env = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    candidates = []
+    if env:
+        candidates.append(Path(env))
+    candidates.extend(
+        [
+            Path("/usr/local/cuda"),
+            Path("/usr/lib/cuda"),
+        ]
+    )
+    # Versioned installs: /usr/local/cuda-12.8 etc.
+    local = Path("/usr/local")
+    if local.is_dir():
+        candidates.extend(sorted(local.glob("cuda-*"), reverse=True))
+    for path in candidates:
+        if (path / "include" / "cuda.h").is_file() or (path / "bin" / "nvcc").is_file():
+            return path.resolve()
+    if _which_ok("nvcc"):
+        nvcc = Path(shutil.which("nvcc") or "").resolve()
+        # .../bin/nvcc -> CUDA home
+        if nvcc.parent.name == "bin":
+            return nvcc.parent.parent
+    return None
+
+
+def detect_compute_cap() -> str | None:
+    """Return COMPUTE_CAP like '86' from nvidia-smi, or None."""
+    if not _which_ok("nvidia-smi"):
+        return None
+    code, out = _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=compute_cap",
+            "--format=csv,noheader",
+        ]
+    )
+    if code != 0 or not out.strip():
+        return None
+    # First GPU only; "8.6" -> "86"
+    first = out.strip().splitlines()[0].strip()
+    if "." in first:
+        major, _, minor = first.partition(".")
+        if major.isdigit() and minor.isdigit():
+            return f"{int(major)}{int(minor)}"
+    digits = "".join(ch for ch in first if ch.isdigit())
+    return digits or None
+
+
+def default_install_names() -> list[str]:
+    names = ["keyhunt", "kangaroo"]
+    if cuda_available():
+        names.append("bitcrack")
+    return names
 
 
 def _clone_or_update(repo: str, dest: Path) -> None:
@@ -205,12 +263,86 @@ def install_kangaroo(*, force: bool = False) -> InstallResult:
     return InstallResult("kangaroo", True, path, "built and installed to bin/kangaroo")
 
 
+def _patch_bitcrack_makefile(src_dir: Path, *, cuda_home: Path, compute_cap: str | None) -> None:
+    makefile = src_dir / "Makefile"
+    if not makefile.is_file():
+        return
+    text = makefile.read_text(encoding="utf-8", errors="ignore")
+    lines = text.splitlines()
+    out: list[str] = []
+    for line in lines:
+        if line.startswith("CUDA_HOME"):
+            out.append(f"CUDA_HOME={cuda_home}")
+        elif compute_cap and line.startswith("COMPUTE_CAP"):
+            out.append(f"COMPUTE_CAP={compute_cap}")
+        else:
+            out.append(line)
+    makefile.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def install_bitcrack(*, force: bool = False) -> InstallResult:
+    dest_bin = bin_dir() / "cuBitCrack"
+    if dest_bin.is_file() and os.access(dest_bin, os.X_OK) and not force:
+        return InstallResult("bitcrack", True, dest_bin.resolve(), "already installed")
+
+    if not cuda_available():
+        return InstallResult(
+            "bitcrack",
+            False,
+            None,
+            "nvcc not found — install CUDA toolkit on this host, then retry "
+            "`engines install --only bitcrack`",
+        )
+    cuda_home = detect_cuda_home()
+    if cuda_home is None:
+        return InstallResult(
+            "bitcrack",
+            False,
+            None,
+            "CUDA headers not found (set CUDA_HOME to the toolkit root)",
+        )
+
+    src_dir = vendor_dir() / "BitCrack"
+    _clone_or_update(BITCRACK_REPO, src_dir)
+    compute_cap = detect_compute_cap()
+    _patch_bitcrack_makefile(src_dir, cuda_home=cuda_home, compute_cap=compute_cap)
+    _run(["make", "clean"], cwd=src_dir)
+    code, out = _run(["make", "BUILD_CUDA=1"], cwd=src_dir)
+    candidates = [
+        src_dir / "bin" / "cuBitCrack",
+        src_dir / "cuBitCrack",
+        src_dir / "bin" / "BitCrack",
+    ]
+    built = next((p for p in candidates if p.is_file()), None)
+    if code != 0 or built is None:
+        hint = f" CUDA_HOME={cuda_home}"
+        if compute_cap:
+            hint += f" COMPUTE_CAP={compute_cap}"
+        return InstallResult(
+            "bitcrack",
+            False,
+            None,
+            f"build failed (make BUILD_CUDA=1;{hint}):\n{out[-2000:]}",
+        )
+    path = _install_link(built, "cuBitCrack")
+    # Also expose as bin/BitCrack for engines candidate list.
+    _install_link(built, "BitCrack")
+    msg = f"built and installed to bin/cuBitCrack (CUDA_HOME={cuda_home}"
+    if compute_cap:
+        msg += f", COMPUTE_CAP={compute_cap}"
+    msg += ")"
+    return InstallResult("bitcrack", True, path, msg)
+
+
 def install_engines(
     names: list[str] | None = None,
     *,
     force: bool = False,
 ) -> list[InstallResult]:
-    """Install selected CPU solvers into workspace bin/ and write config/engines.env."""
+    """Install solvers into workspace bin/ and write config/engines.env.
+
+    Default set: keyhunt + kangaroo, and bitcrack when ``nvcc`` is present.
+    """
     missing = missing_build_tools()
     if missing:
         raise RuntimeError(
@@ -219,7 +351,7 @@ def install_engines(
             + " (Debian/Ubuntu: apt install git build-essential libssl-dev libgmp-dev)"
         )
 
-    selected = list(names or INSTALLABLE)
+    selected = list(names or default_install_names())
     unknown = [n for n in selected if n not in INSTALLABLE and n not in MANUAL_ONLY]
     if unknown:
         raise ValueError(f"unknown engine(s): {', '.join(unknown)}")
@@ -235,6 +367,8 @@ def install_engines(
             result = install_keyhunt(force=force)
         elif name == "kangaroo":
             result = install_kangaroo(force=force)
+        elif name == "bitcrack":
+            result = install_bitcrack(force=force)
         else:
             result = InstallResult(name, False, None, "not supported")
         results.append(result)
@@ -248,13 +382,10 @@ def install_engines(
             env_key = {
                 "keyhunt": "KEYHUNT_PATH",
                 "kangaroo": "KANGAROO_PATH",
+                "bitcrack": "BITCRACK_PATH",
             }.get(name)
             if env_key and not os.environ.get(env_key):
                 os.environ[env_key] = str(path)
-        for result in results:
-            if result.ok:
-                # annotate via message already; keep env path in last ok message style
-                pass
         results.append(
             InstallResult(
                 "config",

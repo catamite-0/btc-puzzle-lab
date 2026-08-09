@@ -43,10 +43,21 @@ def test_install_engines_manual_only(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
     monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda: [])
-    results = install_engines(["bitcrack"])
+    results = install_engines(["rckangaroo"])
     assert len(results) == 1
     assert results[0].ok is False
-    assert "CUDA" in results[0].message
+    assert "RCKANGAROO_PATH" in results[0].message
+
+
+def test_install_bitcrack_requires_cuda(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda: [])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.cuda_available", lambda: False)
+    results = install_engines(["bitcrack"])
+    assert results[0].name == "bitcrack"
+    assert results[0].ok is False
+    assert "nvcc" in results[0].message
 
 
 def test_install_engines_uses_stub_builders(tmp_path, monkeypatch):
