@@ -53,6 +53,22 @@ Transfer uses the existing policy in [TRANSFER.md](TRANSFER.md):
 - dry-run until you explicitly enable live confirm
 - `once --no-transfer` if you only want search + audit
 
+## Hit notifications
+
+Optional alerts after a hit (no private keys in the payload):
+
+```bash
+# in config/.env
+NOTIFY_ENABLED=true
+NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic   # or Discord/Slack webhook
+# and/or:
+# NOTIFY_TELEGRAM_BOT_TOKEN=...
+# NOTIFY_TELEGRAM_CHAT_ID=...
+```
+
+`once` / `watch` send notify automatically when enabled. Disable per-run with `--no-notify`.
+Payload includes puzzle id, address, engine, audit/transfer status only.
+
 ## Long GPU runs
 
 External solvers now stream redacted logs (no full stdout buffering) and honor
