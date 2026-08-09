@@ -18,7 +18,12 @@ from btc_puzzle_lab.hits import read_hits, utc_now
 from btc_puzzle_lab.paths import STATE_DIR
 from btc_puzzle_lab.runlog import log_event
 from btc_puzzle_lab.search import run_puzzle
-from btc_puzzle_lab.strategy import HostProfile, StrategyPlan, plan_strategy, probe_host
+from btc_puzzle_lab.strategy import (
+    HostProfile,
+    StrategyPlan,
+    plan_strategy,
+    probe_host,
+)
 
 JobStatus = Literal[
     "pending",
@@ -49,6 +54,7 @@ class PuzzleJob:
     has_solution: bool
     engine: str
     reason: str
+    resource: str = "cpu"
     workers: int = 1
     threads: int = 2
     dp: int = 16
@@ -67,7 +73,9 @@ class PuzzleJob:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> PuzzleJob:
-        return cls(**row)
+        payload = dict(row)
+        payload.setdefault("resource", "cpu")
+        return cls(**payload)
 
 
 @dataclass
@@ -200,6 +208,7 @@ def build_plan(
                 has_solution=puzzle.practice_solution is not None,
                 engine=strategy.engine,
                 reason=strategy.reason,
+                resource=strategy.resource,
                 workers=strategy.workers,
                 threads=strategy.threads,
                 dp=strategy.dp,
@@ -250,6 +259,7 @@ def run_batch(
     include_blocked: bool = False,
     progress: bool = True,
     plan_path: Path | None = None,
+    timeout: float | None = None,
 ) -> BatchRunResult:
     from btc_puzzle_lab.catalog import get_puzzle
 
@@ -329,6 +339,7 @@ def run_batch(
                 order=job.order,
                 max_chunks=job.max_chunks,
                 dp=job.dp,
+                timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001 — batch continues
             errors += 1
@@ -401,13 +412,14 @@ def format_plan(plan: BatchPlan, *, verbose: bool = False) -> str:
     ]
     if verbose:
         lines.append(
-            f"{'ID':>4} {'bits':>4} {'job':<8} {'engine':<12} {'cat':<8} blocker/reason"
+            f"{'ID':>4} {'bits':>4} {'res':<4} {'job':<8} {'engine':<12} "
+            f"{'cat':<8} blocker/reason"
         )
         for job in plan.jobs:
             detail = job.blocker or job.reason
             lines.append(
-                f"{job.puzzle_id:>4} {job.bits:>4} {job.job_status:<8} "
-                f"{job.engine:<12} {job.status_catalog:<8} {detail}"
+                f"{job.puzzle_id:>4} {job.bits:>4} {job.resource:<4} "
+                f"{job.job_status:<8} {job.engine:<12} {job.status_catalog:<8} {detail}"
             )
     return "\n".join(lines)
 
@@ -420,7 +432,8 @@ def format_status(plan: BatchPlan | None = None) -> str:
     lines = [
         format_plan(plan, verbose=False),
         "",
-        f"{'ID':>4} {'bits':>4} {'job':<8} {'engine':<12} {'cov':>7} hit blocker",
+        f"{'ID':>4} {'bits':>4} {'res':<4} {'job':<8} {'engine':<12} "
+        f"{'cov':>7} hit blocker",
     ]
     for job in plan.jobs:
         ledger = load_coverage(job.puzzle_id)
@@ -428,7 +441,7 @@ def format_status(plan: BatchPlan | None = None) -> str:
         hit = "yes" if job.puzzle_id in hit_ids or job.job_status == "hit" else "no"
         blocker = job.blocker or ""
         lines.append(
-            f"{job.puzzle_id:>4} {job.bits:>4} {job.job_status:<8} "
+            f"{job.puzzle_id:>4} {job.bits:>4} {job.resource:<4} {job.job_status:<8} "
             f"{job.engine:<12} {cov} {hit:<3} {blocker}"
         )
     return "\n".join(lines)

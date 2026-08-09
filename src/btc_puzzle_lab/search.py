@@ -526,6 +526,8 @@ def run_external(
     *,
     threads: int = 2,
     dp: int = 16,
+    timeout: float | None = None,
+    progress: bool = True,
 ) -> SearchOutcome:
     log_event(
         "search_start",
@@ -533,8 +535,16 @@ def run_external(
         engine=engine,
         threads=threads,
         dp=dp,
+        timeout=timeout,
     )
-    result = run_external_engine(puzzle, engine, threads=threads, dp=dp)
+    result = run_external_engine(
+        puzzle,
+        engine,
+        threads=threads,
+        dp=dp,
+        timeout=timeout,
+        progress=progress,
+    )
     if result.secret is None:
         log_event("search_miss", puzzle_id=puzzle.id, engine=engine, detail=result.message)
         return SearchOutcome(hit=None, engine=engine, message=result.message)
@@ -561,6 +571,7 @@ def run_puzzle(
     seed: int | None = None,
     max_chunks: int | None = None,
     dp: int = 16,
+    timeout: float | None = None,
 ) -> SearchOutcome:
     choice = (engine or puzzle.engine_default).lower()
     if choice in {"sequential", "seq"}:
@@ -591,5 +602,12 @@ def run_puzzle(
     if choice in {"inject", "inject-known", "known"}:
         return run_inject_known(puzzle)
     if choice in ENGINES:
-        return run_external(puzzle, choice, threads=threads, dp=dp)
+        return run_external(
+            puzzle,
+            choice,
+            threads=threads,
+            dp=dp,
+            timeout=timeout,
+            progress=progress,
+        )
     return SearchOutcome(hit=None, engine=choice, message=f"unknown engine: {choice}")

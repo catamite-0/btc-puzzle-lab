@@ -22,6 +22,9 @@ LOW_MEM_MB = 2048
 STANDARD_MEM_MB = 8192
 
 HostTier = Literal["constrained", "standard", "gpu", "compute"]
+ResourceClass = Literal["cpu", "gpu"]
+
+GPU_ENGINES = frozenset({"bitcrack", "rckangaroo"})
 
 
 @dataclass(frozen=True)
@@ -63,9 +66,15 @@ class StrategyPlan:
     max_chunks: int | None = None
     tier: HostTier = "constrained"
 
+    @property
+    def resource(self) -> ResourceClass:
+        """Scarce accelerator class this plan should occupy on one machine."""
+        return "gpu" if self.engine in GPU_ENGINES else "cpu"
+
     def format(self) -> str:
         bits = [
             f"tier={self.tier}",
+            f"resource={self.resource}",
             f"engine={self.engine}",
             f"workers={self.workers}",
             f"coverage={self.coverage}",
@@ -435,12 +444,21 @@ def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
             "(keyhunt + kangaroo), or set BITCRACK_PATH / RCKANGAROO_PATH for GPU"
         )
     if host.gpu and "bitcrack" not in host.engines:
-        tips.append("GPU seen but BitCrack missing — set BITCRACK_PATH to enable GPU address search")
+        tips.append(
+            "GPU seen but BitCrack missing — run: "
+            "btc-puzzle-lab engines install --only bitcrack"
+        )
     if "rckangaroo" not in host.engines and "kangaroo" not in host.engines:
         tips.append("no kangaroo-class solver — pubkey puzzles will stay blocked until configured")
     if host.disk_free_mb is not None and host.disk_free_mb < 512:
         tips.append("low free disk (<512 MiB) — coverage/batch state may fail to persist")
-    tips.append("run: btc-puzzle-lab plan --status unsolved && btc-puzzle-lab status")
+    if host.gpu or host.tier in {"gpu", "compute"}:
+        tips.append(
+            "GPU VPS: one card → one puzzle; "
+            "btc-puzzle-lab once --ids 71 --resource gpu"
+        )
+    else:
+        tips.append("run: btc-puzzle-lab once --resource cpu  (or plan/batch manually)")
     return tips
 
 

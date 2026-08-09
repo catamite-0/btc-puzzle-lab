@@ -6,9 +6,22 @@ from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.toolchain import (
     InstallResult,
     _write_engines_env,
+    build_gencode,
     format_install_results,
     install_engines,
 )
+
+
+def test_build_gencode_dual_sass_and_ptx():
+    assert build_gencode("120") == (
+        "-gencode arch=compute_120,code=sm_120 "
+        "-gencode arch=compute_120,code=compute_120"
+    )
+    try:
+        build_gencode("12.0")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
 
 
 def test_write_engines_env_and_resolve(tmp_path, monkeypatch):

@@ -15,15 +15,19 @@
 - Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
   bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
   `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
-- Automation: `host` / `adapt` → `engines install` → `plan` → `batch` → `status`.
+- Automation: `host` / `adapt` → `engines install` → `once` / `watch`
+  (or `plan` → `batch` → `status`). Full loop docs: `docs/LOOP.md`.
+- Resource model: one machine occupies one scarce slot (`gpu` or `cpu`);
+  GPU VPS default is exclusive single-puzzle (`once --limit 1`).
 - Solver toolchain: `btc-puzzle-lab engines install` builds keyhunt + kangaroo
   (+ BitCrack when `nvcc` is present) into ignored `vendor/` + `bin/` and writes
   `config/engines.env`. Never commit those build outputs. RCKangaroo stays manual.
+  BitCrack makefile gets detected `COMPUTE_CAP` plus dual SASS/PTX gencode (5090/`sm_120`).
 - Machine bootstrap: `scripts/machine-bootstrap.sh` + `docs/MACHINE.md`; preflight via `doctor`.
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
 - Ship: merge to `main`, bump versions (`pyproject.toml` + `__version__` + CHANGELOG),
-  then tag `v0.4.1` (or next) to trigger `.github/workflows/release.yml`.
+  then tag `v0.5.0` (or next) to trigger `.github/workflows/release.yml`.
 - Cloud Agent bootstrap: `.cursor/environment.json` + `scripts/cloud-install.sh`
   (idempotent venv/deps). Do not bake `config/.env`, `state/`, `vendor/`, or `bin/`
   into builds.

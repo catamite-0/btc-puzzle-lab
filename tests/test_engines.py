@@ -4,6 +4,7 @@ from unittest.mock import patch
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.engines import (
     parse_privkey_text,
+    redact_engine_line,
     resolve_binary,
     run_external_engine,
 )
@@ -64,9 +65,28 @@ def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):
     fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
     fake.chmod(0o755)
     monkeypatch.setenv("BITCRACK_PATH", str(fake))
-    result = run_external_engine(puzzle, "bitcrack")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_GPU_INDEX", "0")
+    result = run_external_engine(puzzle, "bitcrack", progress=False)
     assert result.secret is None
     assert "--keyspace" in result.cmdline
     assert f"{puzzle.range_start:x}:{puzzle.range_end:x}" in result.cmdline
     assert puzzle.address in result.cmdline
     assert "-c" in result.cmdline
+    assert result.cmdline[result.cmdline.index("-d") + 1] == "0"
+
+
+def test_redact_engine_line_hides_private_key():
+    line = "Private key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+    assert "0123456789abcdef" not in redact_engine_line(line)
+    assert "[REDACTED]" in redact_engine_line(line)
+
+
+def test_external_engine_timeout(tmp_path: Path, monkeypatch):
+    puzzle = get_puzzle(5)
+    fake = tmp_path / "keyhunt"
+    fake.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("KEYHUNT_PATH", str(fake))
+    result = run_external_engine(puzzle, "keyhunt", threads=1, timeout=0.5, progress=False)
+    assert result.secret is None
+    assert "timed out" in result.message

@@ -85,6 +85,19 @@ def run_doctor() -> list[Check]:
             )
         )
 
+    # GPU hosts should surface a missing BitCrack before `once` burns idle hours.
+    if host.gpu or host.tier in {"gpu", "compute"}:
+        bitcrack = resolve_binary("bitcrack")
+        checks.append(
+            Check(
+                "gpu_solver",
+                bitcrack is not None,
+                str(bitcrack)
+                if bitcrack is not None
+                else "missing BitCrack — run: btc-puzzle-lab engines install --only bitcrack",
+            )
+        )
+
     state = Path(STATE_DIR)
     try:
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
