@@ -6,6 +6,7 @@
 - Keep independent from `coinsense` Discord / Gemini; local transfer module is allowed.
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
+  Post-hit ops: `docs/TRANSFER.md` (dry-run → verify → live / broadcast-dry-run).
 - Never commit `state/`, `config/.env`, `dist/`, or hit/dry-run files.
 - Do not print private keys or signed tx hex in chat, logs, commits, or PR text.
   CLI may show keys only with explicit `--show-key`.
