@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-09
+
+Full-loop orchestrator for VPS hosts (CPU/GPU resource slots).
+
+### Added
+- `btc-puzzle-lab once`: sync unsolved → plan → exclusive resource slot → audit → optional sweep
+- Job `resource` tag (`cpu` / `gpu`) from strategy engine class
+- `docs/LOOP.md` and RTX 5090-oriented `docs/MACHINE.md` guidance
+- BitCrack makefile dual SASS/PTX gencode helper (`build_gencode`) for arches like `sm_120`
+- Doctor advisory check when a GPU host is missing BitCrack
+
+### Changed
+- GPU VPS default remains one puzzle per card (`once --limit 1`)
+- `adapt` recommendations point at `once` for GPU hosts
+
 ## [0.4.1] — 2026-08-09
 
 Machine-ready polish for experiment pods.

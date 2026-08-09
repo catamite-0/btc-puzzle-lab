@@ -35,6 +35,7 @@ def test_high_bits_prefer_bitcrack_before_keyhunt():
         get_puzzle(40), host=_host(engines={"keyhunt", "bitcrack"}, cpus=4)
     )
     assert plan.engine == "bitcrack"
+    assert plan.resource == "gpu"
 
 
 def test_high_bits_prefer_keyhunt_when_no_bitcrack():

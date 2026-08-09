@@ -22,6 +22,7 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
+from btc_puzzle_lab.loop import format_loop_result, run_once
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
@@ -434,6 +435,29 @@ def cmd_adapt(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_once(args: argparse.Namespace) -> int:
+    ids = [int(part) for part in args.ids.split(",")] if args.ids else None
+    result = run_once(
+        sync=not args.no_sync,
+        status=args.status,
+        bits_min=args.bits_min,
+        bits_max=args.bits_max,
+        puzzle_ids=ids,
+        limit=args.limit,
+        stop_on_hit=not args.no_stop_on_hit,
+        resource=args.resource,
+        require_doctor=not args.no_doctor,
+        audit=not args.no_audit,
+        check_balance=args.balance,
+        transfer=not args.no_transfer,
+        progress=not args.no_progress,
+    )
+    print(format_loop_result(result))
+    for item in result.transfers:
+        _print_transfer(item)
+    return 0 if result.ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -757,6 +781,76 @@ def build_parser() -> argparse.ArgumentParser:
         help="number of recent run-log events to show (default: 10)",
     )
     p_summary.set_defaults(func=cmd_summary)
+
+    p_once = sub.add_parser(
+        "once",
+        help=(
+            "full loop: sync unsolved → plan → one resource slot → "
+            "audit → optional dry-run transfer"
+        ),
+    )
+    p_once.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="skip catalog import (use current workspace catalog)",
+    )
+    p_once.add_argument(
+        "--status",
+        choices=["all", "solved", "unsolved"],
+        default="unsolved",
+        help="catalog status filter for planning (default: unsolved)",
+    )
+    p_once.add_argument("--bits-min", type=int, default=32)
+    p_once.add_argument("--bits-max", type=int, default=None)
+    p_once.add_argument(
+        "--ids",
+        type=str,
+        default=None,
+        help="comma-separated puzzle ids (e.g. 71)",
+    )
+    p_once.add_argument(
+        "--limit",
+        type=int,
+        default=1,
+        help="max puzzles for this host pass (default: 1 = exclusive slot)",
+    )
+    p_once.add_argument(
+        "--resource",
+        choices=["auto", "cpu", "gpu", "any"],
+        default="auto",
+        help="resource queue (default: auto → gpu on GPU hosts)",
+    )
+    p_once.add_argument(
+        "--no-stop-on-hit",
+        action="store_true",
+        help="keep going after a hit within --limit",
+    )
+    p_once.add_argument(
+        "--no-doctor",
+        action="store_true",
+        help="skip blocking doctor gate",
+    )
+    p_once.add_argument(
+        "--no-audit",
+        action="store_true",
+        help="skip post-hit address verification",
+    )
+    p_once.add_argument(
+        "--balance",
+        action="store_true",
+        help="also query chain balance during audit",
+    )
+    p_once.add_argument(
+        "--no-transfer",
+        action="store_true",
+        help="skip sweep attempt (still records hits)",
+    )
+    p_once.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="quiet search progress",
+    )
+    p_once.set_defaults(func=cmd_once)
 
     return parser
 

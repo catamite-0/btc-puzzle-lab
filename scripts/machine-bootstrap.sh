@@ -36,11 +36,14 @@ cat <<'EOF'
 
 bootstrap done.
 
-Next:
-  btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
-  btc-puzzle-lab status
-  btc-puzzle-lab batch --limit 3 --stop-on-hit
+Next (full loop, one GPU slot):
+  btc-puzzle-lab once --ids 71 --resource gpu
 
-Transfer (later): see docs/TRANSFER.md
-Machine notes:     see docs/MACHINE.md
+Or manual board:
+  btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
+  btc-puzzle-lab batch --limit 1 --stop-on-hit
+
+Loop notes:     see docs/LOOP.md
+Machine notes:  see docs/MACHINE.md
+Transfer later: see docs/TRANSFER.md
 EOF

@@ -131,6 +131,21 @@ def detect_compute_cap() -> str | None:
     return digits or None
 
 
+def build_gencode(compute_cap: str) -> str:
+    """NVCC gencode flags: native SASS + matching PTX for forward compat.
+
+    Borrowed for RTX 5090 (sm_120) and other new arches where a single
+    ``code=sm_XX`` line is brittle across toolkit/driver pairs.
+    """
+    cap = compute_cap.strip()
+    if not cap.isdigit():
+        raise ValueError(f"compute_cap must be digits like '120', got {compute_cap!r}")
+    return (
+        f"-gencode arch=compute_{cap},code=sm_{cap} "
+        f"-gencode arch=compute_{cap},code=compute_{cap}"
+    )
+
+
 def default_install_names() -> list[str]:
     names = ["keyhunt", "kangaroo"]
     if cuda_available():
@@ -277,6 +292,11 @@ def _patch_bitcrack_makefile(src_dir: Path, *, cuda_home: Path, compute_cap: str
             out.append(f"COMPUTE_CAP={compute_cap}")
         else:
             out.append(line)
+    # Append dual gencode (SASS + PTX) for newer arches such as sm_120 / RTX 5090.
+    if compute_cap:
+        gencode = build_gencode(compute_cap)
+        if not any(gencode in line for line in out):
+            out.append(f"NVCCFLAGS+={gencode}")
     makefile.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 

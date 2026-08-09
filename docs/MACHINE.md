@@ -1,12 +1,22 @@
 # Machine experiment bootstrap
 
+> Full closed loop: [LOOP.md](LOOP.md) (`btc-puzzle-lab once`).  
+> Transfer ops: [TRANSFER.md](TRANSFER.md).
+
 Short path after a RunPod (or similar) GPU pod is up.
 
-## 1. Deploy pod
+## 1. Deploy pod (RTX 5090 strategy)
 
-- Product: **Pods** (not Serverless)
-- Card: **A40** (or RTX 4090 if Community pricing is better)
-- Template: Ubuntu + CUDA, enable SSH or Jupyter
+| Setting | Recommendation |
+|---|---|
+| Product | **Pods** (not Serverless) |
+| GPU | **RTX 5090** (or A40 if cheaper for the same experiment) |
+| Instance | On-demand — avoid Spot for long unsolved runs |
+| Image | Ubuntu + **CUDA 12.8+** (needed for Blackwell / `sm_120`) |
+| Disk | ≥ 20 GiB persistent volume on `/workspace` |
+| Concurrency | **1 GPU = 1 puzzle** |
+
+Billing rule: if the GPU is idle, stop the pod.
 
 ## 2. Bootstrap
 
@@ -21,6 +31,7 @@ What it does:
 
 - installs build deps + Python package
 - `engines install` → keyhunt / kangaroo, and **bitcrack** when `nvcc` exists
+  (makefile patched with detected `COMPUTE_CAP` + dual SASS/PTX gencode)
 - `import-catalog` → full puzzle list in workspace `data/puzzles.json`
 - `doctor` + `adapt` preflight
 
@@ -28,22 +39,36 @@ What it does:
 
 ```bash
 nvidia-smi
+btc-puzzle-lab doctor
 btc-puzzle-lab engines
 # if BitCrack missing but CUDA is present:
 btc-puzzle-lab engines install --only bitcrack --force
-export BITCRACK_PATH="$PWD/bin/cuBitCrack"   # usually auto via config/engines.env
 ```
 
-## 4. Run board
+Confirm compute capability shows **12.0** (reported as `120`) on 5090.
+
+## 4. Run the loop (recommended)
+
+```bash
+# exclusive GPU slot on lowest ready unsolved (usually #71 after import)
+btc-puzzle-lab once --resource gpu
+
+# or pin explicitly:
+btc-puzzle-lab once --ids 71 --resource gpu
+```
+
+Manual board (same strategy under the hood):
 
 ```bash
 btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
 btc-puzzle-lab status
-btc-puzzle-lab batch --limit 3 --stop-on-hit
-# or single puzzle:
+btc-puzzle-lab batch --limit 1 --stop-on-hit
 btc-puzzle-lab strategy 71
 btc-puzzle-lab run 71 --auto
 ```
+
+CPU on the same box: leave it for `once` orchestration / audit / transfer.
+Optional second puzzle only if it is a **different** pubkey/CPU job and does not starve the GPU search.
 
 ## 5. Transfer (only after a real hit)
 
@@ -55,6 +80,8 @@ cp config/.env.example config/.env
 btc-puzzle-lab transfer --verify-dry-run
 ```
 
+`once` will call sweep automatically when transfer is enabled; defaults still skip/dry-run.
+
 ## Useful commands
 
 | Command | Purpose |
@@ -62,4 +89,5 @@ btc-puzzle-lab transfer --verify-dry-run
 | `doctor` | Blocking preflight |
 | `adapt` | Host tier + next actions |
 | `engines install` | Build solvers into `bin/` |
+| `once` | Full sync → plan → search → audit → sweep attempt |
 | `plan` / `batch` / `status` | Catalog automation board |

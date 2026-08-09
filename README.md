@@ -8,7 +8,7 @@ catalog → search engine → state/HITS.jsonl → local audit → optional swee
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-**Release:** `v0.4.1` — machine-ready bootstrap (`doctor` + BitCrack install)
+**Release:** `v0.5.0` — full loop (`once`) + GPU resource slotting for VPS hosts
 
 ## Quick start
 
@@ -32,7 +32,8 @@ git clone https://github.com/catamitez0-maker/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
-# details: docs/MACHINE.md
+btc-puzzle-lab once --ids 71 --resource gpu
+# details: docs/MACHINE.md , docs/LOOP.md
 ```
 
 From a tagged release / wheel:
@@ -40,7 +41,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.4.1"
+python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.5.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
@@ -60,17 +61,18 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 ## Stable workflow
 
 ```text
-host / adapt → import-catalog → plan → batch → status
-                      ↓
-              strategy / run --auto   (single puzzle, same adaptive rules)
-                      ↓
-             HITS → audit → (optional) transfer
+host / adapt → engines install → once
+                 (sync → plan → one gpu/cpu slot → audit → optional sweep)
+
+# or the same steps manually:
+import-catalog → plan → batch → status → audit → transfer
 ```
 
 | Command | Role |
 |---|---|
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
+| `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
 | `import-catalog` | Load full catalog into workspace `data/puzzles.json` |
 | `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
 | `batch` | Execute ready jobs (limit / resume / stop-on-hit) |

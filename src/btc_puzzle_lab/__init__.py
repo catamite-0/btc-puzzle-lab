@@ -1,3 +1,3 @@
 """BTC Puzzle Lab — practice pipeline for solved Bitcoin puzzles."""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"

@@ -16,8 +16,10 @@ def test_build_plan_marks_local_ready_and_external_blocked(tmp_path, monkeypatch
     by_id = {job.puzzle_id: job for job in plan.jobs}
     assert by_id[1].job_status == "ready"
     assert by_id[1].engine == "sequential"
+    assert by_id[1].resource == "cpu"
     assert by_id[40].job_status == "ready"
     assert by_id[40].engine == "window"
+    assert by_id[40].resource == "cpu"
     path = save_plan(plan, tmp_path / "state" / "batch_plan.json")
     loaded = load_plan(path)
     assert loaded is not None
