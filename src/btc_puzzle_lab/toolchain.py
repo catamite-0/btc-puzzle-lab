@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,14 +28,30 @@ KANGAROO_REPO = os.environ.get(
 BITCRACK_REPO = os.environ.get(
     "BTC_PUZZLE_LAB_BITCRACK_REPO", "https://github.com/brichard19/BitCrack.git"
 )
+RCKANGAROO_REPO = os.environ.get(
+    "BTC_PUZZLE_LAB_RCKANGAROO_REPO", "https://github.com/RetiredC/RCKangaroo.git"
+)
 
-INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack")
-MANUAL_ONLY = {
-    "rckangaroo": (
-        "RCKangaroo is not auto-built here; place RCKangaroo under bin/ "
-        "or set RCKANGAROO_PATH"
+# Pinned upstream revisions. Tracking a moving default branch means two hosts can
+# install different solvers on different days with no record of which — and an
+# upstream output-format change lands silently. Override per engine to move.
+PINNED_COMMITS = {
+    "keyhunt": os.environ.get(
+        "BTC_PUZZLE_LAB_KEYHUNT_COMMIT", "2134a2024e524775b13f82aa1fa07b1c8053f867"
+    ),
+    "kangaroo": os.environ.get(
+        "BTC_PUZZLE_LAB_KANGAROO_COMMIT", "37576c82d198c20fca65b14da74138ae6153a446"
+    ),
+    "bitcrack": os.environ.get(
+        "BTC_PUZZLE_LAB_BITCRACK_COMMIT", "6bf8059ef075eb1622298395866b0bd02375e1d9"
+    ),
+    "rckangaroo": os.environ.get(
+        "BTC_PUZZLE_LAB_RCKANGAROO_COMMIT", "618473acd7f5e696be5ec4f8377c18cc55c1361c"
     ),
 }
+
+INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack", "rckangaroo")
+MANUAL_ONLY: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -76,6 +93,50 @@ def _which_ok(name: str) -> bool:
 def missing_build_tools() -> list[str]:
     needed = ["git", "make", "g++"]
     return [name for name in needed if not _which_ok(name)]
+
+
+# header -> Debian/Ubuntu package providing it.
+_REQUIRED_HEADERS = {
+    "gmp.h": "libgmp-dev",
+    "openssl/sha.h": "libssl-dev",
+}
+
+
+def _have_header(header: str) -> bool:
+    """Ask the compiler, rather than guessing include paths per distro."""
+    if not _which_ok("g++"):
+        return False
+    try:
+        proc = subprocess.run(
+            ["g++", "-E", "-x", "c++", "-"],
+            input=f"#include <{header}>\nint main(){{return 0;}}\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def missing_build_headers() -> list[str]:
+    """Dev headers the solver builds need but `which` cannot see.
+
+    keyhunt links against GMP and OpenSSL; a host with git/make/g++ but no
+    -dev packages passes the tool check and then fails deep in `make`.
+    """
+    return [header for header in _REQUIRED_HEADERS if not _have_header(header)]
+
+
+def build_deps_hint(tools: list[str], headers: list[str]) -> str:
+    packages = ["git", "build-essential"]
+    packages += [_REQUIRED_HEADERS[h] for h in headers if h in _REQUIRED_HEADERS]
+    missing = ", ".join(tools + headers)
+    return (
+        f"missing build dependencies: {missing}\n"
+        f"  Debian/Ubuntu: sudo apt install -y {' '.join(dict.fromkeys(packages))}\n"
+        f"  Fedora/RHEL:   sudo dnf install -y git gcc-c++ make gmp-devel openssl-devel"
+    )
 
 
 def cuda_available() -> bool:
@@ -149,22 +210,48 @@ def build_gencode(compute_cap: str) -> str:
 def default_install_names() -> list[str]:
     names = ["keyhunt", "kangaroo"]
     if cuda_available():
-        names.append("bitcrack")
+        names += ["bitcrack", "rckangaroo"]
     return names
 
 
-def _clone_or_update(repo: str, dest: Path) -> None:
+def _clone_or_update(repo: str, dest: Path, commit: str | None = None) -> None:
+    """Check out ``commit`` (pinned) or the default branch tip when unpinned."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if (dest / ".git").is_dir():
-        code, out = _run(["git", "-C", str(dest), "pull", "--ff-only"])
+    if commit is None:
+        if (dest / ".git").is_dir():
+            code, out = _run(["git", "-C", str(dest), "pull", "--ff-only"])
+            if code != 0:
+                raise RuntimeError(f"git pull failed for {dest}: {out}")
+            return
+        if dest.exists():
+            shutil.rmtree(dest)
+        code, out = _run(["git", "clone", "--depth", "1", repo, str(dest)])
         if code != 0:
-            raise RuntimeError(f"git pull failed for {dest}: {out}")
+            raise RuntimeError(f"git clone failed for {repo}: {out}")
         return
-    if dest.exists():
-        shutil.rmtree(dest)
-    code, out = _run(["git", "clone", "--depth", "1", repo, str(dest)])
+
+    if (dest / ".git").is_dir():
+        code, out = _run(["git", "-C", str(dest), "rev-parse", "HEAD"])
+        if code == 0 and out.strip().startswith(commit):
+            return
+    else:
+        if dest.exists():
+            shutil.rmtree(dest)
+        code, out = _run(["git", "init", "-q", str(dest)])
+        if code != 0:
+            raise RuntimeError(f"git init failed for {dest}: {out}")
+        _run(["git", "-C", str(dest), "remote", "add", "origin", repo])
+
+    # Fetching a bare SHA is cheapest; fall back to a full history fetch for
+    # servers that refuse reachable-SHA1 requests.
+    code, out = _run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", commit])
     if code != 0:
-        raise RuntimeError(f"git clone failed for {repo}: {out}")
+        code, out = _run(["git", "-C", str(dest), "fetch", "origin"])
+        if code != 0:
+            raise RuntimeError(f"git fetch failed for {repo}@{commit}: {out}")
+    code, out = _run(["git", "-C", str(dest), "checkout", "-q", "--detach", commit])
+    if code != 0:
+        raise RuntimeError(f"git checkout {commit} failed for {repo}: {out}")
 
 
 def _install_link(src: Path, name: str) -> Path:
@@ -220,7 +307,7 @@ def install_keyhunt(*, force: bool = False) -> InstallResult:
         return InstallResult("keyhunt", True, dest_bin.resolve(), "already installed")
 
     src_dir = vendor_dir() / "keyhunt"
-    _clone_or_update(KEYHUNT_REPO, src_dir)
+    _clone_or_update(KEYHUNT_REPO, src_dir, PINNED_COMMITS.get("keyhunt"))
     code, out = _run(["make"], cwd=src_dir)
     built = src_dir / "keyhunt"
     if code != 0 or not built.is_file():
@@ -259,7 +346,7 @@ def install_kangaroo(*, force: bool = False) -> InstallResult:
         return InstallResult("kangaroo", True, dest_bin.resolve(), "already installed")
 
     src_dir = vendor_dir() / "Kangaroo"
-    _clone_or_update(KANGAROO_REPO, src_dir)
+    _clone_or_update(KANGAROO_REPO, src_dir, PINNED_COMMITS.get("kangaroo"))
     _patch_kangaroo_sources(src_dir)
     # CPU build (no CUDA). GPU operators can rebuild upstream with gpu=1 themselves.
     code, out = _run(["make", "clean"], cwd=src_dir)
@@ -323,7 +410,7 @@ def install_bitcrack(*, force: bool = False) -> InstallResult:
         )
 
     src_dir = vendor_dir() / "BitCrack"
-    _clone_or_update(BITCRACK_REPO, src_dir)
+    _clone_or_update(BITCRACK_REPO, src_dir, PINNED_COMMITS.get("bitcrack"))
     compute_cap = detect_compute_cap()
     _patch_bitcrack_makefile(src_dir, cuda_home=cuda_home, compute_cap=compute_cap)
     _run(["make", "clean"], cwd=src_dir)
@@ -354,6 +441,165 @@ def install_bitcrack(*, force: bool = False) -> InstallResult:
     return InstallResult("bitcrack", True, path, msg)
 
 
+def install_rckangaroo(*, force: bool = False) -> InstallResult:
+    dest_bin = bin_dir() / "RCKangaroo"
+    if dest_bin.is_file() and os.access(dest_bin, os.X_OK) and not force:
+        return InstallResult("rckangaroo", True, dest_bin.resolve(), "already installed")
+
+    if not cuda_available():
+        return InstallResult(
+            "rckangaroo",
+            False,
+            None,
+            "nvcc not found — RCKangaroo is GPU-only; install the CUDA toolkit and retry",
+        )
+    if not _which_ok("cmake"):
+        return InstallResult(
+            "rckangaroo",
+            False,
+            None,
+            "cmake not found (Debian/Ubuntu: sudo apt install -y cmake)",
+        )
+    cuda_home = detect_cuda_home()
+    if cuda_home is None:
+        return InstallResult(
+            "rckangaroo", False, None, "CUDA headers not found (set CUDA_HOME)"
+        )
+
+    src_dir = vendor_dir() / "RCKangaroo"
+    _clone_or_update(RCKANGAROO_REPO, src_dir, PINNED_COMMITS.get("rckangaroo"))
+    code, out = _run(
+        [
+            "cmake",
+            "-B",
+            "build",
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DCUDAToolkit_ROOT={cuda_home}",
+        ],
+        cwd=src_dir,
+    )
+    if code != 0:
+        return InstallResult(
+            "rckangaroo", False, None, f"cmake configure failed:\n{out[-2000:]}"
+        )
+    code, out = _run(["cmake", "--build", "build", "-j"], cwd=src_dir)
+    candidates = [
+        src_dir / "build" / "bin" / "rckangaroo",
+        src_dir / "build" / "rckangaroo",
+        src_dir / "build" / "bin" / "RCKangaroo",
+    ]
+    built = next((p for p in candidates if p.is_file()), None)
+    if code != 0 or built is None:
+        return InstallResult(
+            "rckangaroo", False, None, f"build failed:\n{out[-2000:]}"
+        )
+    path = _install_link(built, "RCKangaroo")
+
+    # RCKangaroo loads kernel_sm*.cubin from its working directory; engines.py links
+    # them in from beside the binary, so they have to land in bin/ too.
+    cubins = sorted(src_dir.glob("*.cubin"))
+    for cubin in cubins:
+        shutil.copy2(cubin, bin_dir() / cubin.name)
+    if not cubins:
+        return InstallResult(
+            "rckangaroo",
+            False,
+            path,
+            "built, but no kernel_sm*.cubin found upstream — it would spin at 0 MKeys/s",
+        )
+    names = ", ".join(c.name for c in cubins)
+    return InstallResult(
+        "rckangaroo", True, path, f"built and installed to bin/RCKangaroo (kernels: {names})"
+    )
+
+
+@dataclass(frozen=True)
+class SelfCheckResult:
+    name: str
+    ok: bool
+    puzzle_id: int | None
+    message: str
+    seconds: float = 0.0
+
+
+# Solved practice puzzles small enough to finish in seconds, chosen per engine:
+# keyhunt/bitcrack search by address, kangaroo needs bits >= 32, and RCKangaroo
+# rejects -range below 32 so it needs bits-1 >= 32.
+SELFCHECK_PUZZLES = {
+    "keyhunt": 20,
+    "bitcrack": 20,
+    "kangaroo": 32,
+    "rckangaroo": 40,
+}
+
+
+def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
+    """Make the engine actually solve a puzzle whose answer we already know.
+
+    A build that compiles and runs still tells you nothing: every engine in this
+    lab has at some point searched correctly and then failed to hand the key
+    back (wrong result filename, unlabelled output, a kernel that never loaded).
+    Only an end-to-end solve distinguishes "installed" from "works".
+    """
+    # Imported here so the build layer does not hard-depend on the search layer.
+    from btc_puzzle_lab.catalog import get_puzzle
+    from btc_puzzle_lab.engines import resolve_binary, run_external_engine
+
+    puzzle_id = SELFCHECK_PUZZLES.get(name)
+    if puzzle_id is None:
+        return SelfCheckResult(name, False, None, "no self-check defined for this engine")
+    if resolve_binary(name) is None:
+        return SelfCheckResult(name, False, puzzle_id, "not installed")
+    try:
+        puzzle = get_puzzle(puzzle_id)
+    except (KeyError, ValueError) as exc:
+        return SelfCheckResult(name, False, puzzle_id, f"catalog lookup failed: {exc}")
+    if puzzle.practice_solution is None:
+        return SelfCheckResult(
+            name, False, puzzle_id, f"puzzle #{puzzle_id} has no known solution to check against"
+        )
+
+    started = time.monotonic()
+    result = run_external_engine(puzzle, name, timeout=timeout, progress=False)
+    elapsed = time.monotonic() - started
+
+    if result.secret is None:
+        return SelfCheckResult(
+            name,
+            False,
+            puzzle_id,
+            f"ran but returned no key for #{puzzle_id} ({result.message})",
+            elapsed,
+        )
+    if result.secret != puzzle.practice_solution:
+        return SelfCheckResult(
+            name, False, puzzle_id, f"returned the wrong key for #{puzzle_id}", elapsed
+        )
+    return SelfCheckResult(name, True, puzzle_id, f"solved #{puzzle_id}", elapsed)
+
+
+def selfcheck_engines(
+    names: list[str] | None = None,
+    *,
+    timeout: float = 180.0,
+) -> list[SelfCheckResult]:
+    from btc_puzzle_lab.engines import resolve_binary
+
+    selected = names or [n for n in SELFCHECK_PUZZLES if resolve_binary(n) is not None]
+    return [selfcheck_engine(name, timeout=timeout) for name in selected]
+
+
+def format_selfcheck_results(results: list[SelfCheckResult]) -> str:
+    if not results:
+        return "self-check: no engines installed to verify"
+    lines = ["engine self-check (solves a puzzle with a known answer):"]
+    for item in results:
+        mark = "ok" if item.ok else "!!"
+        timing = f" in {item.seconds:.1f}s" if item.seconds else ""
+        lines.append(f"  [{mark}] {item.name:<11} {item.message}{timing}")
+    return "\n".join(lines)
+
+
 def install_engines(
     names: list[str] | None = None,
     *,
@@ -364,12 +610,9 @@ def install_engines(
     Default set: keyhunt + kangaroo, and bitcrack when ``nvcc`` is present.
     """
     missing = missing_build_tools()
-    if missing:
-        raise RuntimeError(
-            "missing build tools: "
-            + ", ".join(missing)
-            + " (Debian/Ubuntu: apt install git build-essential libssl-dev libgmp-dev)"
-        )
+    missing_headers = missing_build_headers()
+    if missing or missing_headers:
+        raise RuntimeError(build_deps_hint(missing, missing_headers))
 
     selected = list(names or default_install_names())
     unknown = [n for n in selected if n not in INSTALLABLE and n not in MANUAL_ONLY]
@@ -389,6 +632,8 @@ def install_engines(
             result = install_kangaroo(force=force)
         elif name == "bitcrack":
             result = install_bitcrack(force=force)
+        elif name == "rckangaroo":
+            result = install_rckangaroo(force=force)
         else:
             result = InstallResult(name, False, None, "not supported")
         results.append(result)

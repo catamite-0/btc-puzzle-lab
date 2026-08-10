@@ -227,23 +227,46 @@ Operators should not hand-wire someone else's binary path for the default CPU
 solvers. Install them into the workspace:
 
 ```bash
-# Debian/Ubuntu deps once:
-sudo apt install -y git build-essential libssl-dev libgmp-dev
+# Debian/Ubuntu deps once (cmake only needed for rckangaroo):
+sudo apt install -y git build-essential libssl-dev libgmp-dev cmake
 
-btc-puzzle-lab engines install              # keyhunt + kangaroo → bin/ + config/engines.env
+btc-puzzle-lab engines install              # → bin/ + config/engines.env, then self-checks
 btc-puzzle-lab engines install --only keyhunt
+btc-puzzle-lab engines selfcheck            # re-verify installed solvers
 btc-puzzle-lab engines                      # status
 ```
+
+Missing compilers *and* missing dev headers are both reported up front with the
+exact package line for your distro, instead of failing deep inside `make`.
 
 | Engine | Install | Needs | Role |
 |---|---|---|---|
 | `keyhunt` | `engines install` (albertobsd/keyhunt) | address | CPU address / range search |
 | `kangaroo` | `engines install` (JeanLucPons/Kangaroo, CPU) | compressed pubkey | Pollard kangaroo |
 | `bitcrack` | `engines install` when `nvcc` present | address | GPU address brute-force |
-| `rckangaroo` | manual | compressed pubkey | faster kangaroo when present |
+| `rckangaroo` | `engines install` when `nvcc` present | compressed pubkey | GPU kangaroo (SOTA, fastest) |
 
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
 `config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
+
+Upstream solvers are checked out at pinned commits so two hosts install the same
+thing; override per engine with `BTC_PUZZLE_LAB_<ENGINE>_COMMIT`.
+
+#### Self-check
+
+`engines install` finishes by making each solver crack a practice puzzle whose
+answer is already known, and fails if the key does not come back. A solver that
+compiles and runs can still be useless — every engine here has at some point
+searched correctly and then failed to hand the key over (wrong result filename,
+unlabelled output, a GPU kernel that never loaded, each reported as "no hit").
+
+```bash
+btc-puzzle-lab engines selfcheck
+btc-puzzle-lab engines selfcheck --only rckangaroo --selfcheck-timeout 60
+btc-puzzle-lab engines install --no-selfcheck   # skip it (leaves engines unverified)
+```
+
+This runs real searches, so it is a local-only command — never wire it into CI.
 
 ```bash
 btc-puzzle-lab engines

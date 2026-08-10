@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -153,3 +154,20 @@ def test_external_engine_timeout(tmp_path: Path, monkeypatch):
     result = run_external_engine(puzzle, "keyhunt", threads=1, timeout=0.5, progress=False)
     assert result.secret is None
     assert "timed out" in result.message
+
+
+def test_engine_stops_as_soon_as_result_file_has_the_key(tmp_path, monkeypatch):
+    # keyhunt does not exit after writing its hit, so waiting for the process to
+    # end burns the whole timeout on an already-solved puzzle.
+    fake = tmp_path / "keyhunt"
+    fake.write_text(
+        "#!/bin/sh\nprintf 'Private Key: 15\\n' > KEYFOUNDKEYFOUND.txt\nsleep 60\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("KEYHUNT_PATH", str(fake))
+    started = time.monotonic()
+    result = run_external_engine(get_puzzle(5), "keyhunt", threads=1, timeout=30, progress=False)
+    elapsed = time.monotonic() - started
+    assert result.secret == 0x15
+    assert elapsed < 10, f"should not wait out the 30s budget, took {elapsed:.1f}s"

@@ -194,6 +194,8 @@ def _run(
     assert proc.stdout is not None
     deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
     timed_out = False
+    solved_early = False
+    next_result_poll = time.monotonic() + 1.0
     selector = selectors.DefaultSelector()
     selector.register(proc.stdout, selectors.EVENT_READ)
     try:
@@ -201,6 +203,13 @@ def _run(
             if deadline is not None and time.monotonic() >= deadline:
                 timed_out = True
                 break
+            # keyhunt keeps scanning after it writes the key, so waiting for the
+            # process to exit burns the whole budget on a solved puzzle.
+            if time.monotonic() >= next_result_poll:
+                next_result_poll = time.monotonic() + 1.0
+                if parse_privkey_text(_append_result_files(cwd, "")) is not None:
+                    solved_early = True
+                    break
             wait = 0.25
             if deadline is not None:
                 wait = max(0.01, min(wait, deadline - time.monotonic()))
@@ -223,7 +232,7 @@ def _run(
             chunks.append(line)
             if progress:
                 print(redact_engine_line(line), end="", flush=True)
-        if timed_out and proc.poll() is None:
+        if (timed_out or solved_early) and proc.poll() is None:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
             except ProcessLookupError:
@@ -247,9 +256,15 @@ def _run(
 
     output = "".join(chunks)
     output = _append_result_files(cwd, output)
-    code = 124 if timed_out else int(proc.returncode if proc.returncode is not None else 1)
-    if timed_out:
+    if solved_early:
+        # We killed a winning solver on purpose; its exit status is meaningless.
+        code = 0
+        output += "\n[btc-puzzle-lab] engine stopped: key found in result file"
+    elif timed_out:
+        code = 124
         output += "\n[btc-puzzle-lab] engine stopped: timeout reached"
+    else:
+        code = int(proc.returncode if proc.returncode is not None else 1)
     return code, output
 
 

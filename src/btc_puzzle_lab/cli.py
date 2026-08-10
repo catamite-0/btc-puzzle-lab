@@ -33,7 +33,14 @@ from btc_puzzle_lab.strategy import (
     probe_host,
 )
 from btc_puzzle_lab.summary import build_summary, format_summary
-from btc_puzzle_lab.toolchain import format_install_results, install_engines
+from btc_puzzle_lab.toolchain import (
+    INSTALLABLE,
+    SELFCHECK_PUZZLES,
+    format_install_results,
+    format_selfcheck_results,
+    install_engines,
+    selfcheck_engines,
+)
 from btc_puzzle_lab.transfer import (
     TransferResult,
     broadcast_dry_run_file,
@@ -186,14 +193,26 @@ def cmd_engines(args: argparse.Namespace) -> int:
         print(format_install_results(results))
         print()
         print(format_engine_status())
-        # Fail if any requested installable engine failed (ignore manual-only notes
-        # unless they were the only selection).
-        hard_fail = [
-            r
-            for r in results
-            if not r.ok and r.name in {"keyhunt", "kangaroo", "bitcrack"}
-        ]
+        hard_fail = [r for r in results if not r.ok and r.name in INSTALLABLE]
+        if args.no_selfcheck:
+            print()
+            print("self-check skipped (--no-selfcheck); engines are unverified")
+            return 1 if hard_fail else 0
+        installed = [r.name for r in results if r.ok and r.name in SELFCHECK_PUZZLES]
+        if installed:
+            print()
+            checks = selfcheck_engines(installed, timeout=args.selfcheck_timeout)
+            print(format_selfcheck_results(checks))
+            if any(not c.ok for c in checks):
+                return 1
         return 1 if hard_fail else 0
+    if action == "selfcheck":
+        only = None
+        if args.only:
+            only = [part.strip() for part in args.only.split(",") if part.strip()]
+        checks = selfcheck_engines(only, timeout=args.selfcheck_timeout)
+        print(format_selfcheck_results(checks))
+        return 1 if any(not c.ok for c in checks) else 0
     print(format_engine_status())
     return 0
 
@@ -642,14 +661,47 @@ def build_parser() -> argparse.ArgumentParser:
     p_eng_install.add_argument(
         "--only",
         default=None,
-        help="comma-separated: keyhunt,kangaroo,bitcrack (default: CPU pair + bitcrack if nvcc)",
+        help=(
+            "comma-separated: keyhunt,kangaroo,bitcrack,rckangaroo "
+            "(default: CPU pair, plus the GPU pair when nvcc is present)"
+        ),
     )
     p_eng_install.add_argument(
         "--force",
         action="store_true",
         help="rebuild even if bin/<engine> already exists",
     )
+    p_eng_install.add_argument(
+        "--no-selfcheck",
+        action="store_true",
+        help="skip the post-install solve check (leaves engines unverified)",
+    )
+    p_eng_install.add_argument(
+        "--selfcheck-timeout",
+        type=float,
+        default=180.0,
+        help="per-engine self-check budget in seconds (default: 180)",
+    )
     p_eng_install.set_defaults(func=cmd_engines, engines_action="install")
+
+    p_eng_check = eng_sub.add_parser(
+        "selfcheck",
+        # Local-only on purpose: this searches keyspace, which must never run on
+        # GitHub-hosted runners. See the note in .github/workflows/ci.yml.
+        help="verify installed solvers by solving puzzles with known answers",
+    )
+    p_eng_check.add_argument(
+        "--only",
+        default=None,
+        help="comma-separated engines to verify (default: every installed engine)",
+    )
+    p_eng_check.add_argument(
+        "--selfcheck-timeout",
+        type=float,
+        default=180.0,
+        help="per-engine budget in seconds (default: 180)",
+    )
+    p_eng_check.set_defaults(func=cmd_engines, engines_action="selfcheck")
     p_engines.set_defaults(func=cmd_engines, engines_action="status")
 
     p_host = sub.add_parser("host", help="probe host profile (CPU/RAM/GPU/engines/tier)")
