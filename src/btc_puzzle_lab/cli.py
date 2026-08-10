@@ -115,6 +115,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         seed=args.seed,
         max_chunks=args.max_chunks,
         dp=16 if args.dp is None else args.dp,
+        timeout=_loop_timeout(args),
     )
     if args.auto:
         plan = plan_strategy(puzzle)
@@ -445,6 +446,11 @@ def _loop_timeout(args: argparse.Namespace) -> float | None:
     return None
 
 
+def _loop_plan_path(args: argparse.Namespace) -> Path | None:
+    raw = getattr(args, "plan_file", None)
+    return Path(raw) if raw else None
+
+
 def cmd_once(args: argparse.Namespace) -> int:
     result = run_once(
         sync=not args.no_sync,
@@ -462,6 +468,7 @@ def cmd_once(args: argparse.Namespace) -> int:
         notify=not args.no_notify,
         progress=not args.no_progress,
         timeout=_loop_timeout(args),
+        plan_path=_loop_plan_path(args),
     )
     print(format_loop_result(result))
     for item in result.transfers:
@@ -490,6 +497,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         transfer=not args.no_transfer,
         notify=not args.no_notify,
         progress=not args.no_progress,
+        plan_path=_loop_plan_path(args),
     )
     print(format_watch_result(result))
     if result.last is not None:
@@ -702,6 +710,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="resume from state/scan_<id>.json checkpoint if present",
     )
     p_run.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="stop an external solver after this many seconds (keyhunt does not self-exit)",
+    )
+    p_run.add_argument(
         "--coverage",
         action="store_true",
         help="scan via coverage ledger chunks (skips already-done ranges)",
@@ -840,6 +854,15 @@ def build_parser() -> argparse.ArgumentParser:
         )
         parser.add_argument("--bits-min", type=int, default=32)
         parser.add_argument("--bits-max", type=int, default=None)
+        parser.add_argument(
+            "--plan-file",
+            type=str,
+            default=None,
+            help=(
+                "job board path (default: state/batch_plan.json). Give concurrent "
+                "loops separate files so they do not overwrite each other's plan."
+            ),
+        )
         parser.add_argument(
             "--ids",
             type=str,

@@ -265,10 +265,28 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     knobs = _resource_knobs(profile)
     workers = int(knobs["workers"] or 1)
     threads = int(knobs["threads"] or 1)
+    # Tier knobs cap threads at 8; let operators feed a big CPU box explicitly.
+    env_threads = _env_int("BTC_PUZZLE_LAB_THREADS")
+    if env_threads and env_threads > 0:
+        threads = env_threads
     chunk = int(knobs["chunk"] or DEFAULT_CHUNK_SIZE)
     window = int(knobs["window"] or 1_000_000)
     max_chunks = knobs["max_chunks"]
     dp = int(knobs["dp"] or 16)
+    # Operator override: pin the engine (and therefore the cpu/gpu slot) instead of
+    # letting availability decide. batch._job_status still blocks impossible picks.
+    forced = os.environ.get("BTC_PUZZLE_LAB_ENGINE", "").strip().lower()
+    if forced:
+        return StrategyPlan(
+            engine=forced,
+            workers=workers,
+            threads=threads,
+            dp=dp,
+            window=window,
+            tier=profile.tier,
+            reason=f"tier={profile.tier}: engine pinned by BTC_PUZZLE_LAB_ENGINE={forced}",
+        )
+
     range_size = puzzle.range_end - puzzle.range_start + 1
     installed = profile.engines
 
@@ -417,7 +435,8 @@ def format_host_profile(profile: HostProfile | None = None) -> str:
         "  gpu         : NVIDIA or GPU solvers present — prefer BitCrack/RCKangaroo",
         "  compute     : high CPU/RAM — larger chunks/windows/threads",
         "",
-        "env overrides: BTC_PUZZLE_LAB_CPUS, BTC_PUZZLE_LAB_MEM_MB, BTC_PUZZLE_LAB_GPU",
+        "env overrides: BTC_PUZZLE_LAB_CPUS, BTC_PUZZLE_LAB_MEM_MB, BTC_PUZZLE_LAB_GPU, "
+        "BTC_PUZZLE_LAB_THREADS",
     ]
     knobs = _resource_knobs(host)
     lines.extend(
