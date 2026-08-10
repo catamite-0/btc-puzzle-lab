@@ -21,7 +21,7 @@ Billing rule: if the GPU is idle, stop the pod.
 ## 2. Bootstrap
 
 ```bash
-git clone https://github.com/catamitez0-maker/btc-puzzle-lab.git
+git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate

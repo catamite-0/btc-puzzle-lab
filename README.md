@@ -28,7 +28,7 @@ btc-puzzle-lab run 1
 GPU experiment pod (RunPod etc.):
 
 ```bash
-git clone https://github.com/catamitez0-maker/btc-puzzle-lab.git
+git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
@@ -41,7 +41,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamitez0-maker/btc-puzzle-lab.git@v0.5.0"
+python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.5.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```

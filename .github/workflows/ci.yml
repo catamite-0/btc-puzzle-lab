@@ -1,5 +1,11 @@
 name: CI
 
+# Lint and unit tests only — never build or run the external solvers here.
+# `engines install` compiles keyhunt/Kangaroo/BitCrack/RCKangaroo, and the engine
+# self-check actually searches keyspace; doing either on GitHub-hosted runners is
+# cryptocurrency compute under the Acceptable Use Policies. Those steps are
+# local-only commands by design. Keep this job to pip + ruff + pytest.
+
 on:
   push:
     branches: [main]

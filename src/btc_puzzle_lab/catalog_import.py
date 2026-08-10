@@ -26,7 +26,7 @@ SOURCE_PAGE = "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
 _FETCH_HEADERS = {
     "User-Agent": (
         f"Mozilla/5.0 (compatible; btc-puzzle-lab/{__version__}; "
-        "+https://github.com/catamitez0-maker/btc-puzzle-lab)"
+        "+https://github.com/catamite-0/btc-puzzle-lab)"
     ),
     "Accept": "text/csv,text/plain,*/*",
     "Referer": SOURCE_PAGE,
