@@ -33,8 +33,8 @@ _PRIVATE_KEY_LINE_RE = re.compile(
 )
 # BitCrack result files carry no label: "<address> <privkey> <pubkey>".
 _BITCRACK_FOUND_RE = re.compile(
-    r"^\s*(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[023456789ac-hj-np-z]{11,71})\s+"
-    r"([0-9a-fA-F]{64})\s+"
+    r"^\s*(?P<address>[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[023456789ac-hj-np-z]{11,71})\s+"
+    r"(?P<key>[0-9a-fA-F]{64})\s+"
     r"(?:0[23][0-9a-fA-F]{64}|04[0-9a-fA-F]{128})\s*$"
 )
 
@@ -126,8 +126,13 @@ def available_engines() -> list[str]:
     return [name for name in ENGINES if resolve_binary(name) is not None]
 
 
-def parse_privkey_text(text: str) -> int | None:
-    """Extract a private key int from solver stdout/stderr/result files."""
+def parse_privkey_text(text: str, *, expected_address: str | None = None) -> int | None:
+    """Extract a private key int from solver stdout/stderr/result files.
+
+    ``expected_address`` unlocks BitCrack's unlabelled result rows. They carry the
+    address they belong to, so requiring a match keeps a stale or multi-target
+    result file from being read as a hit for the puzzle we are actually running.
+    """
     for line in text.splitlines():
         lower = line.lower()
         if not any(token in lower for token in ("private key", "privkey", "priv:", "priv ")):
@@ -138,11 +143,13 @@ def parse_privkey_text(text: str) -> int | None:
                 return int(normalize_privkey_hex(token), 16)
             except ValueError:
                 continue
+    if expected_address is None:
+        return None
     for line in text.splitlines():
         match = _BITCRACK_FOUND_RE.match(line)
-        if match:
+        if match and match.group("address") == expected_address:
             try:
-                return int(normalize_privkey_hex(match.group(1)), 16)
+                return int(normalize_privkey_hex(match.group("key")), 16)
             except ValueError:
                 continue
     return None
@@ -174,6 +181,7 @@ def _run(
     cwd: Path,
     timeout: float | None = None,
     progress: bool = True,
+    expected_address: str | None = None,
 ) -> tuple[int, str]:
     """Stream solver output (redacted) so long GPU runs do not buffer forever."""
     print("running:", " ".join(cmd), flush=True)
@@ -207,7 +215,8 @@ def _run(
             # process to exit burns the whole budget on a solved puzzle.
             if time.monotonic() >= next_result_poll:
                 next_result_poll = time.monotonic() + 1.0
-                if parse_privkey_text(_append_result_files(cwd, "")) is not None:
+                probe = _append_result_files(cwd, "")
+                if parse_privkey_text(probe, expected_address=expected_address) is not None:
                     solved_early = True
                     break
             wait = 0.25
@@ -413,7 +422,13 @@ def run_external_engine(
     }
     cmd, cwd = builders[engine]()
     try:
-        code, output = _run(cmd, cwd=cwd, timeout=timeout, progress=progress)
+        code, output = _run(
+            cmd,
+            cwd=cwd,
+            timeout=timeout,
+            progress=progress,
+            expected_address=puzzle.address,
+        )
     finally:
         # Best-effort cleanup; ignore failures on busy filesystems.
         for path in sorted(cwd.rglob("*"), reverse=True):
@@ -426,7 +441,7 @@ def run_external_engine(
         except OSError:
             pass
 
-    secret = parse_privkey_text(output)
+    secret = parse_privkey_text(output, expected_address=puzzle.address)
     if secret is None:
         detail = f"{engine} exited {code}; no private key parsed"
         if code == 124:

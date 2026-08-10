@@ -21,14 +21,29 @@ def test_parse_privkey_text_common_formats():
 
 def test_parse_privkey_text_bitcrack_found_file():
     # BitCrack -o file: "<address> <privkey> <pubkey>", no label.
+    addr = "1FRoHA9xewq7DjrZ1psWJVeTer8gHRqEvR"
+    line = (
+        f"{addr} "
+        "00000000000000000000000000000000000000000000000000000000e9ae4933 "
+        "0209c58240e50e3ba3f833c82655e8725c037a2294e14cf5d73a5df8d56159de69"
+    )
+    assert parse_privkey_text(line, expected_address=addr) == 0xE9AE4933
+    # Progress noise must not be mistaken for a hit.
+    assert parse_privkey_text("[Info] 70.0% 1.2 MK/s", expected_address=addr) is None
+
+
+def test_bitcrack_row_needs_the_address_we_are_searching_for():
+    # A stale or multi-target result file must not be read as our hit.
     line = (
         "1FRoHA9xewq7DjrZ1psWJVeTer8gHRqEvR "
         "00000000000000000000000000000000000000000000000000000000e9ae4933 "
         "0209c58240e50e3ba3f833c82655e8725c037a2294e14cf5d73a5df8d56159de69"
     )
-    assert parse_privkey_text(line) == 0xE9AE4933
-    # Progress noise must not be mistaken for a hit.
-    assert parse_privkey_text("[Info] 70.0% 1.2 MK/s") is None
+    assert parse_privkey_text(line, expected_address="1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum") is None
+    # Unlabelled rows stay locked until a caller says which address it wants.
+    assert parse_privkey_text(line) is None
+    # Labelled output is still parsed without one.
+    assert parse_privkey_text("Private key: 0xd2c55") == 0xD2C55
 
 
 def test_append_result_files_picks_up_keyhunt(tmp_path: Path):
