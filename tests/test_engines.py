@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.engines import (
+    _append_result_files,
+    bitcrack_keyspace,
     parse_privkey_text,
     redact_engine_line,
     resolve_binary,
@@ -14,6 +16,47 @@ def test_parse_privkey_text_common_formats():
     assert parse_privkey_text("PRIVATE KEY: 0000000000000000000000000000000000000000000000000000000000000015") == 0x15
     assert parse_privkey_text("Priv: 0xd2c55") == 0xD2C55
     assert parse_privkey_text("no key here") is None
+
+
+def test_parse_privkey_text_bitcrack_found_file():
+    # BitCrack -o file: "<address> <privkey> <pubkey>", no label.
+    line = (
+        "1FRoHA9xewq7DjrZ1psWJVeTer8gHRqEvR "
+        "00000000000000000000000000000000000000000000000000000000e9ae4933 "
+        "0209c58240e50e3ba3f833c82655e8725c037a2294e14cf5d73a5df8d56159de69"
+    )
+    assert parse_privkey_text(line) == 0xE9AE4933
+    # Progress noise must not be mistaken for a hit.
+    assert parse_privkey_text("[Info] 70.0% 1.2 MK/s") is None
+
+
+def test_append_result_files_picks_up_keyhunt(tmp_path: Path):
+    (tmp_path / "KEYFOUNDKEYFOUND.txt").write_text(
+        "Private Key: d2c55\nAddress 1HsMJxNiV7TLxmoF6uJNkydxPFDog4NQum\n",
+        encoding="utf-8",
+    )
+    assert parse_privkey_text(_append_result_files(tmp_path, "scanning...")) == 0xD2C55
+
+
+def test_bitcrack_keyspace_sequential_by_default(monkeypatch):
+    monkeypatch.delenv("BTC_PUZZLE_LAB_BITCRACK_RANDOM", raising=False)
+    puzzle = get_puzzle(32)
+    assert bitcrack_keyspace(puzzle) == f"{puzzle.range_start:x}:{puzzle.range_end:x}"
+
+
+def test_bitcrack_keyspace_random_window_stays_in_range(monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_BITCRACK_RANDOM", "1")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_BITCRACK_CHUNK", "0x1000")
+    puzzle = get_puzzle(32)
+    seen = set()
+    for _ in range(50):
+        start_hex, count_hex = bitcrack_keyspace(puzzle).split(":+")
+        start, count = int(start_hex, 16), int(count_hex, 16)
+        assert count == 0x1000
+        assert puzzle.range_start <= start
+        assert start + count - 1 <= puzzle.range_end
+        seen.add(start)
+    assert len(seen) > 1, "random mode must not pin a single start"
 
 
 def test_resolve_binary_respects_env(tmp_path: Path, monkeypatch):
@@ -73,6 +116,26 @@ def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):
     assert puzzle.address in result.cmdline
     assert "-c" in result.cmdline
     assert result.cmdline[result.cmdline.index("-d") + 1] == "0"
+
+
+def test_rckangaroo_links_cubin_into_workdir(tmp_path: Path, monkeypatch):
+    # Without the cubin beside it RCKangaroo spins at 0 MKeys/s instead of failing.
+    fake = tmp_path / "RCKangaroo"
+    fake.write_text("#!/bin/sh\nls *.cubin\n", encoding="utf-8")
+    fake.chmod(0o755)
+    (tmp_path / "kernel_sm120.cubin").write_text("stub", encoding="utf-8")
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    result = run_external_engine(get_puzzle(40), "rckangaroo", dp=16, progress=False)
+    assert result.cmdline[result.cmdline.index("-dp") + 1] == "16"
+
+
+def test_rckangaroo_dp_clamped_to_upstream_max(tmp_path: Path, monkeypatch):
+    fake = tmp_path / "RCKangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    result = run_external_engine(get_puzzle(40), "rckangaroo", dp=48, progress=False)
+    assert result.cmdline[result.cmdline.index("-dp") + 1] == "32"
 
 
 def test_redact_engine_line_hides_private_key():

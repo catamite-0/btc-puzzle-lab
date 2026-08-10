@@ -10,8 +10,10 @@ Manual ``*_PATH`` env vars still win when set.
 from __future__ import annotations
 
 import os
+import random
 import re
 import selectors
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -28,6 +30,12 @@ from btc_puzzle_lab.paths import workspace_root
 _HEX_KEY = re.compile(r"\b(0x)?([0-9a-fA-F]{1,64})\b")
 _PRIVATE_KEY_LINE_RE = re.compile(
     r"(?i)((?:private\s*key|privkey|priv)\s*:?\s*)(?:0x)?[0-9a-f]{1,64}"
+)
+# BitCrack result files carry no label: "<address> <privkey> <pubkey>".
+_BITCRACK_FOUND_RE = re.compile(
+    r"^\s*(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[023456789ac-hj-np-z]{11,71})\s+"
+    r"([0-9a-fA-F]{64})\s+"
+    r"(?:0[23][0-9a-fA-F]{64}|04[0-9a-fA-F]{128})\s*$"
 )
 
 
@@ -130,6 +138,13 @@ def parse_privkey_text(text: str) -> int | None:
                 return int(normalize_privkey_hex(token), 16)
             except ValueError:
                 continue
+    for line in text.splitlines():
+        match = _BITCRACK_FOUND_RE.match(line)
+        if match:
+            try:
+                return int(normalize_privkey_hex(match.group(1)), 16)
+            except ValueError:
+                continue
     return None
 
 
@@ -139,7 +154,14 @@ def redact_engine_line(line: str) -> str:
 
 
 def _append_result_files(cwd: Path, output: str) -> str:
-    for name in ("RESULTS.TXT", "Result.txt", "KEYFOUND.key", "Found.txt", "found.txt"):
+    for name in (
+        "RESULTS.TXT",
+        "Result.txt",
+        "KEYFOUND.key",
+        "KEYFOUNDKEYFOUND.txt",  # keyhunt's actual hit file
+        "Found.txt",
+        "found.txt",
+    ):
         path = cwd / name
         if path.is_file():
             output += "\n" + path.read_text(encoding="utf-8", errors="ignore")
@@ -267,11 +289,19 @@ def _cmd_kangaroo(binary: Path, puzzle: Puzzle, *, threads: int) -> tuple[list[s
 
 def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-rc-"))
+    # RCKangaroo loads its kernel_sm*.cubin from the working directory. Without them it
+    # does not exit — it spins at "Speed: 0 MKeys/s, Err: 1" forever — so link them in.
+    for cubin in sorted(binary.parent.glob("*.cubin")):
+        try:
+            (tmp / cubin.name).symlink_to(cubin)
+        except OSError:
+            shutil.copy2(cubin, tmp / cubin.name)
     # RCKangaroo: -range is bit-width of interval (= bits-1), -start is range_start.
     cmd = [
         str(binary),
         "-dp",
-        str(max(14, min(dp, 60))),
+        # Upstream accepts 14..32; anything higher is rejected outright.
+        str(max(14, min(dp, 32))),
         "-range",
         str(max(32, puzzle.bits - 1)),
         "-start",
@@ -282,10 +312,37 @@ def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str]
     return cmd, tmp
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    try:
+        return int(raw, 0) if raw else None
+    except ValueError:
+        return None
+
+
+def bitcrack_keyspace(puzzle: Puzzle) -> str:
+    """Sequential full range, or a random window when random mode is on.
+
+    BitCrack only scans forward from a start key, so "random scan" means drawing a
+    fresh uniform start per invocation instead of replaying the low end every time.
+    """
+    if not _env_flag("BTC_PUZZLE_LAB_BITCRACK_RANDOM"):
+        return f"{puzzle.range_start:x}:{puzzle.range_end:x}"
+    span = puzzle.range_end - puzzle.range_start + 1
+    chunk = _env_int("BTC_PUZZLE_LAB_BITCRACK_CHUNK") or (1 << 40)
+    chunk = max(1, min(chunk, span))
+    start = puzzle.range_start + random.SystemRandom().randrange(span - chunk + 1)
+    return f"{start:x}:+{chunk:x}"
+
+
 def _cmd_bitcrack(binary: Path, puzzle: Puzzle) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-bc-"))
     out = tmp / "found.txt"
-    keyspace = f"{puzzle.range_start:x}:{puzzle.range_end:x}"
+    keyspace = bitcrack_keyspace(puzzle)
     cmd = [str(binary), "-c"]
     # Optional device / grid knobs for VPS tuning (safe defaults when unset).
     device = os.environ.get("BTC_PUZZLE_LAB_GPU_INDEX", "").strip()
