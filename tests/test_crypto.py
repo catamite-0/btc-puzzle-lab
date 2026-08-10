@@ -8,10 +8,15 @@ from btc_puzzle_lab.crypto import (
 
 
 def test_catalog_solutions_derive_addresses():
+    checked = 0
     for puzzle in load_puzzles():
-        assert puzzle.practice_solution is not None
+        # Unsolved entries (full import-catalog) legitimately carry no solution.
+        if puzzle.practice_solution is None:
+            continue
         derived = privkey_to_p2pkh_address(privkey_bytes(puzzle.practice_solution))
         assert derived == puzzle.address
+        checked += 1
+    assert checked, "catalog exposed no solved entries to verify"
 
 
 def test_split_range_covers_exactly():

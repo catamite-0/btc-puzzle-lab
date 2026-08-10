@@ -10,7 +10,9 @@ def test_puzzle_ranges_match_bit_width():
     for puzzle in load_puzzles():
         assert puzzle.range_start == 1 << (puzzle.bits - 1)
         assert puzzle.range_end == (1 << puzzle.bits) - 1
-        assert puzzle.range_start <= puzzle.practice_solution <= puzzle.range_end
+        # Unsolved entries (full import-catalog) legitimately carry no solution.
+        if puzzle.practice_solution is not None:
+            assert puzzle.range_start <= puzzle.practice_solution <= puzzle.range_end
 
 
 def test_engine_defaults_match_host_class():
