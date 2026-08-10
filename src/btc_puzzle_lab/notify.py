@@ -8,6 +8,7 @@ Channels (any combination):
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -56,11 +57,88 @@ def build_hit_message(
     return "\n".join(lines)
 
 
-def _webhook_payload(text: str, webhook_url: str) -> dict[str, Any] | str:
+_COLOURS: dict[str, int] = {
+    "broadcast": 0x2ECC71,  # green — funds actually moved
+    "dry_run": 0x3498DB,  # blue — signed locally, nothing sent
+    "skipped": 0xF1C40F,  # amber — a safety gate held
+    "error": 0xE74C3C,  # red — audit or sweep failed
+}
+_MEMPOOL = "https://mempool.space"
+
+
+def _btc(sats: int) -> str:
+    return f"{sats / 100_000_000:.8f} BTC ({sats:,} sats)"
+
+
+def _field(name: str, value: str, *, inline: bool = True) -> dict[str, Any]:
+    return {"name": name, "value": value, "inline": inline}
+
+
+def build_hit_embed(
+    hit: Hit,
+    *,
+    audit: AuditResult | None = None,
+    transfer: TransferResult | None = None,
+) -> dict[str, Any]:
+    """Discord rich embed for a hit. Carries no key material or signed tx hex."""
+    colour = _COLOURS["skipped"]
+    if audit is not None and (not audit.address_ok or audit.error):
+        colour = _COLOURS["error"]
+    elif transfer is not None:
+        colour = _COLOURS.get(transfer.status, _COLOURS["skipped"])
+
+    fields = [
+        _field(
+            "Address",
+            f"[`{hit.address}`]({_MEMPOOL}/address/{hit.address})",
+            inline=False,
+        ),
+        _field("Engine", f"`{hit.engine}`"),
+        _field("Key verified", "✅ yes" if hit.verified else "⚠️ unverified"),
+    ]
+
+    if audit is not None:
+        if audit.error:
+            fields.append(_field("Audit", f"❌ {audit.error}"))
+        elif audit.address_ok:
+            kind = f" · {audit.addr_type}" if audit.addr_type else ""
+            fields.append(_field("Audit", f"✅ key derives address{kind}"))
+        else:
+            fields.append(_field("Audit", "❌ address mismatch"))
+        if audit.balance_sats is not None:
+            fields.append(_field("Balance", _btc(audit.balance_sats)))
+
+    if transfer is not None:
+        lines = [f"**{transfer.status}** — {transfer.message}"]
+        if transfer.dest_addr:
+            lines.append(f"→ [`{transfer.dest_addr}`]({_MEMPOOL}/address/{transfer.dest_addr})")
+        if transfer.send_amount is not None:
+            lines.append(f"amount: {_btc(transfer.send_amount)}")
+        if transfer.fee is not None:
+            rate = f" @ {transfer.fee_rate} sat/vB" if transfer.fee_rate else ""
+            lines.append(f"fee: {transfer.fee:,} sats{rate}")
+        if transfer.txid:
+            lines.append(f"txid: [`{transfer.txid}`]({_MEMPOOL}/tx/{transfer.txid})")
+        fields.append(_field("Sweep", "\n".join(lines), inline=False))
+
+    return {
+        "title": f"🎯 Puzzle #{hit.puzzle_id} solved",
+        "color": colour,
+        "fields": fields,
+        "footer": {"text": "btc-puzzle-lab · private key never leaves state/HITS.jsonl"},
+        "timestamp": hit.found_at,
+    }
+
+
+def _webhook_payload(
+    text: str,
+    webhook_url: str,
+    embed: dict[str, Any] | None = None,
+) -> dict[str, Any] | str:
     host = (urlparse(webhook_url).hostname or "").lower()
-    # Discord incoming webhooks expect {"content": "..."}.
+    # Discord incoming webhooks take {"content": ...} or a rich {"embeds": [...]}.
     if "discord.com" in host or "discordapp.com" in host:
-        return {"content": text[:1900]}
+        return {"embeds": [embed]} if embed else {"content": text[:1900]}
     # Slack incoming webhooks expect {"text": "..."}.
     if "hooks.slack.com" in host:
         return {"text": text}
@@ -68,8 +146,14 @@ def _webhook_payload(text: str, webhook_url: str) -> dict[str, Any] | str:
     return {"message": text, "title": "btc-puzzle-lab HIT", "body": text}
 
 
-def send_webhook(text: str, *, url: str, timeout: float = 15.0) -> NotifyResult:
-    payload = _webhook_payload(text, url)
+def send_webhook(
+    text: str,
+    *,
+    url: str,
+    embed: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> NotifyResult:
+    payload = _webhook_payload(text, url, embed)
     try:
         if isinstance(payload, str):
             resp = requests.post(
@@ -133,13 +217,20 @@ def notify_hit(
         return [NotifyResult("none", False, "notify enabled but no webhook/telegram configured")]
 
     text = build_hit_message(hit, audit=audit, transfer=transfer)
-    # Hard safety: never ship key material even if a caller regresses.
-    if hit.private_key_hex and hit.private_key_hex in text:
+    embed = build_hit_embed(hit, audit=audit, transfer=transfer)
+    # Hard safety: never ship key material even if a caller regresses. The embed is
+    # scrubbed through its serialised form so a leak in any nested field is caught.
+    if hit.private_key_hex:
         text = text.replace(hit.private_key_hex, "[REDACTED]")
+        raw = json.dumps(embed)
+        if hit.private_key_hex.lower() in raw.lower():
+            embed = json.loads(
+                re.sub(re.escape(hit.private_key_hex), "[REDACTED]", raw, flags=re.IGNORECASE)
+            )
 
     results: list[NotifyResult] = []
     if cfg.webhook_url:
-        results.append(send_webhook(text, url=cfg.webhook_url))
+        results.append(send_webhook(text, url=cfg.webhook_url, embed=embed))
     if cfg.telegram_bot_token and cfg.telegram_chat_id:
         results.append(
             send_telegram(

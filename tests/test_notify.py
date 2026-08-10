@@ -1,9 +1,17 @@
+import json
 from unittest.mock import patch
 
+from btc_puzzle_lab.audit import AuditResult
 from btc_puzzle_lab.hits import Hit
-from btc_puzzle_lab.notify import build_hit_message, notify_hit
+from btc_puzzle_lab.notify import (
+    _webhook_payload,
+    build_hit_embed,
+    build_hit_message,
+    notify_hit,
+)
 from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.settings import NotifySettings, get_notify_settings, validate_notify_settings
+from btc_puzzle_lab.transfer import TransferResult
 
 
 def _hit() -> Hit:
@@ -23,6 +31,35 @@ def test_build_hit_message_has_no_private_key():
     assert "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU" in text
     assert "a" * 64 not in text
     assert "private key kept in local" in text
+
+
+def test_hit_embed_carries_no_private_key():
+    embed = json.dumps(build_hit_embed(_hit()))
+    assert "a" * 64 not in embed
+    assert "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU" in embed
+    assert "Puzzle #71 solved" in embed
+
+
+def test_hit_embed_colour_tracks_transfer_status():
+    green = build_hit_embed(_hit(), transfer=TransferResult("broadcast", "sent"))["color"]
+    amber = build_hit_embed(_hit(), transfer=TransferResult("skipped", "gated"))["color"]
+    assert green != amber
+    # A failed audit outranks whatever the sweep reported.
+    red = build_hit_embed(
+        _hit(),
+        audit=AuditResult(_hit(), address_ok=False, derived_address="x", balance_sats=None),
+        transfer=TransferResult("broadcast", "sent"),
+    )["color"]
+    assert red not in (green, amber)
+
+
+def test_discord_payload_uses_embed_not_content():
+    embed = build_hit_embed(_hit())
+    payload = _webhook_payload("plain", "https://discord.com/api/webhooks/1/x", embed)
+    assert "embeds" in payload and "content" not in payload
+    # Non-Discord endpoints keep the plain-text shape.
+    slack = _webhook_payload("plain", "https://hooks.slack.com/services/x", embed)
+    assert slack == {"text": "plain"}
 
 
 def test_validate_notify_requires_channel_when_enabled():
