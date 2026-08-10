@@ -54,3 +54,13 @@ def test_packaged_catalog_is_practice_subset():
     assert '"id": 20' in pkg_copy
     ids = {p.id for p in load_puzzles()}
     assert {1, 20, 40, 50}.issubset(ids)
+
+
+def test_tests_never_run_against_the_real_checkout():
+    # Guards tests/conftest.py: without the isolated workspace fixture, anything
+    # that logs an event writes into the operator's live state/runs.jsonl.
+    root = workspace_root()
+    assert not (root / "pyproject.toml").is_file(), (
+        f"tests are running against the checkout at {root}; "
+        "the isolated_workspace fixture is not active"
+    )
