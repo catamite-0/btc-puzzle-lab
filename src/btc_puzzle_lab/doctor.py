@@ -21,6 +21,7 @@ from btc_puzzle_lab.toolchain import (
     cuda_available,
     detect_compute_cap,
     detect_cuda_home,
+    missing_build_headers,
     missing_build_tools,
 )
 from btc_puzzle_lab.transfer import format_transfer_policy
@@ -42,13 +43,16 @@ def run_doctor() -> list[Check]:
     checks.append(Check("workspace", True, str(root)))
 
     missing = missing_build_tools()
-    checks.append(
-        Check(
-            "build_tools",
-            not missing,
-            "ok" if not missing else f"missing: {', '.join(missing)}",
-        )
-    )
+    missing_headers = missing_build_headers()
+    if missing or missing_headers:
+        detail = f"missing: {', '.join(missing + missing_headers)}"
+        packages = {"gmp.h": "libgmp-dev", "openssl/sha.h": "libssl-dev"}
+        hint = " ".join(packages[h] for h in missing_headers if h in packages)
+        if hint:
+            detail += f" — apt install -y {hint}"
+    else:
+        detail = "ok"
+    checks.append(Check("build_tools", not (missing or missing_headers), detail))
 
     cuda_ok = cuda_available()
     cuda_home = detect_cuda_home()
@@ -81,7 +85,7 @@ def run_doctor() -> list[Check]:
             else "none yet — next: btc-puzzle-lab engines install",
         )
     )
-    for name in ("keyhunt", "kangaroo", "bitcrack"):
+    for name in ("keyhunt", "kangaroo", "bitcrack", "rckangaroo"):
         path = resolve_binary(name)
         checks.append(
             Check(

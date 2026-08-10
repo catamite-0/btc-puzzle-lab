@@ -17,3 +17,13 @@ def test_cli_doctor(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
     assert main(["doctor"]) == 0
+
+
+def test_doctor_reports_missing_dev_headers(monkeypatch):
+    # doctor used to say build_tools ok on a host where keyhunt cannot compile.
+    monkeypatch.setattr("btc_puzzle_lab.doctor.missing_build_tools", lambda: [])
+    monkeypatch.setattr("btc_puzzle_lab.doctor.missing_build_headers", lambda: ["gmp.h"])
+    check = next(c for c in run_doctor() if c.name == "build_tools")
+    assert not check.ok
+    assert "gmp.h" in check.detail
+    assert "libgmp-dev" in check.detail
