@@ -54,6 +54,7 @@ PROJECTED_OOM_WARN_MINUTES = float(os.environ.get("WATCHDOG_OOM_WARN_MINUTES", "
 MEMORY_WARN_FRACTION = float(os.environ.get("WATCHDOG_MEM_WARN_FRACTION", "0.80"))
 RESTARTS_WARN_24H = int(os.environ.get("WATCHDOG_RESTARTS_WARN", "3"))
 SPEED_ALERT_FRACTION = float(os.environ.get("WATCHDOG_SPEED_FRACTION", "0.7"))
+CHURN_ONGOING_WINDOW = float(os.environ.get("WATCHDOG_CHURN_WINDOW", "3600"))
 # Progress output is what makes throughput observable, so it has to be kept -
 # bounded instead of silenced.
 LOG_MAX_BYTES = int(os.environ.get("WATCHDOG_LOG_MAX_BYTES", str(64 * 1024 * 1024)))
@@ -139,16 +140,35 @@ def log(message: str) -> None:
     print(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {message}", flush=True)
 
 
-_last_alert: dict[str, float] = {}
+# Cooldowns survive a watchdog restart: supervise.sh can respawn this process,
+# and in-memory state would let one condition re-notify on every respawn.
+_ALERT_STATE = WORKSPACE / "state" / "watchdog_alerts.json"
+
+
+def _load_alert_state() -> dict[str, float]:
+    try:
+        return json.loads(_ALERT_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_alert_state(state: dict[str, float]) -> None:
+    try:
+        _ALERT_STATE.parent.mkdir(parents=True, exist_ok=True)
+        _ALERT_STATE.write_text(json.dumps(state), encoding="utf-8")
+    except OSError as exc:
+        log(f"  could not persist alert state: {exc}")
 
 
 def alert(key: str, text: str, *, force: bool = False) -> None:
     """Notify, but do not repeat the same condition every cycle."""
-    now = time.monotonic()
-    if not force and now - _last_alert.get(key, -1e9) < ALERT_COOLDOWN:
+    now = time.time()
+    state = _load_alert_state()
+    if not force and now - state.get(key, -1e9) < ALERT_COOLDOWN:
         log(f"[alert suppressed:{key}] {text}")
         return
-    _last_alert[key] = now
+    state[key] = now
+    _save_alert_state(state)
     log(f"[ALERT:{key}] {text}")
     try:
         settings = get_notify_settings()
@@ -205,12 +225,14 @@ def cgroup_memory() -> tuple[int, int] | None:
     return None
 
 
-def restarts_last_24h(puzzle_id: int) -> int:
+def restart_history(puzzle_id: int) -> tuple[int, float | None]:
+    """(restarts in 24h, seconds since the most recent one)."""
     runs = WORKSPACE / "state" / "runs.jsonl"
     if not runs.is_file():
-        return 0
+        return 0, None
     cutoff = time.time() - 86400
     count = 0
+    latest: float | None = None
     try:
         for line in runs.read_text(encoding="utf-8", errors="ignore").splitlines():
             line = line.strip()
@@ -229,9 +251,11 @@ def restarts_last_24h(puzzle_id: int) -> int:
                 continue
             if epoch >= cutoff:
                 count += 1
+            if latest is None or epoch > latest:
+                latest = epoch
     except OSError:
-        return 0
-    return count
+        return 0, None
+    return count, (time.time() - latest if latest is not None else None)
 
 
 def launch(job: Job) -> None:
@@ -363,14 +387,18 @@ def check_job(job: Job) -> None:
         launch(job)
         return
 
-    churn = restarts_last_24h(job.puzzle_id)
+    churn, since_last = restart_history(job.puzzle_id)
     budget = job.restart_budget_24h
-    if churn > budget:
+    # A 24h count keeps firing for a full day after the cause is fixed. Only raise
+    # it while the churn is still happening; history alone is not an incident.
+    ongoing = since_last is not None and since_last < CHURN_ONGOING_WINDOW
+    if churn > budget and ongoing:
         alert(
             f"churn-{job.name}",
-            f"{job.name}: solver restarted {churn} times in 24h (expected at most {budget}). "
-            "Kangaroo-class engines lose their distinguished-point table on every restart, "
-            "so the search may be making no cumulative progress.",
+            f"{job.name}: solver restarted {churn} times in 24h (expected at most {budget}), "
+            f"most recently {since_last / 60:.0f} min ago. Kangaroo-class engines lose their "
+            "distinguished-point table on every restart, so the search may be making no "
+            "cumulative progress.",
         )
     check_memory(job)
     check_throughput(job)
