@@ -192,8 +192,7 @@ def _run(
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            bufsize=0,
             start_new_session=True,
         )
     except OSError as exc:
@@ -204,8 +203,31 @@ def _run(
     timed_out = False
     solved_early = False
     next_result_poll = time.monotonic() + 1.0
+    fd = proc.stdout.fileno()
+    pending = ""
     selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
+    selector.register(fd, selectors.EVENT_READ)
+
+    def emit(segment: str) -> None:
+        chunks.append(segment + "\n")
+        if progress:
+            print(redact_engine_line(segment), flush=True)
+
+    def consume(raw: str, *, final: bool = False) -> None:
+        # Solvers refresh progress with carriage returns (RCKangaroo, BitCrack and
+        # Kangaroo all do). Splitting on "\n" alone means their throughput lines are
+        # never seen at all, which is how a run can silently drop to half speed.
+        nonlocal pending
+        pending += raw
+        parts = re.split(r"\r\n|\r|\n", pending)
+        pending = "" if final else parts.pop()
+        for part in parts:
+            if part.strip():
+                emit(part)
+        if final and pending.strip():
+            emit(pending)
+            pending = ""
+
     try:
         while True:
             if deadline is not None and time.monotonic() >= deadline:
@@ -225,22 +247,17 @@ def _run(
             events = selector.select(timeout=wait)
             if not events:
                 if proc.poll() is not None:
-                    # Drain any trailing bytes after exit.
-                    rest = proc.stdout.read()
-                    if rest:
-                        chunks.append(rest)
-                        if progress:
-                            print(redact_engine_line(rest), end="", flush=True)
                     break
                 continue
-            line = proc.stdout.readline()
-            if line == "":
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b""
+            if not data:
                 if proc.poll() is not None:
                     break
                 continue
-            chunks.append(line)
-            if progress:
-                print(redact_engine_line(line), end="", flush=True)
+            consume(data.decode("utf-8", errors="replace"))
         if (timed_out or solved_early) and proc.poll() is None:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
@@ -262,6 +279,21 @@ def _run(
             except ProcessLookupError:
                 pass
             proc.wait(timeout=5)
+        # Drain whatever the solver wrote on its way out, then flush the partial
+        # segment left in the buffer (progress refreshes never end in a newline).
+        try:
+            while True:
+                data = os.read(fd, 65536)
+                if not data:
+                    break
+                consume(data.decode("utf-8", errors="replace"))
+        except OSError:
+            pass
+        consume("", final=True)
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
 
     output = "".join(chunks)
     output = _append_result_files(cwd, output)

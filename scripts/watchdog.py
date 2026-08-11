@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -44,6 +45,10 @@ CHECK_INTERVAL = float(os.environ.get("WATCHDOG_INTERVAL", "300"))
 PROJECTED_OOM_WARN_MINUTES = float(os.environ.get("WATCHDOG_OOM_WARN_MINUTES", "90"))
 MEMORY_WARN_FRACTION = float(os.environ.get("WATCHDOG_MEM_WARN_FRACTION", "0.80"))
 RESTARTS_WARN_24H = int(os.environ.get("WATCHDOG_RESTARTS_WARN", "3"))
+SPEED_ALERT_FRACTION = float(os.environ.get("WATCHDOG_SPEED_FRACTION", "0.7"))
+# Progress output is what makes throughput observable, so it has to be kept -
+# bounded instead of silenced.
+LOG_MAX_BYTES = int(os.environ.get("WATCHDOG_LOG_MAX_BYTES", str(64 * 1024 * 1024)))
 ALERT_COOLDOWN = float(os.environ.get("WATCHDOG_ALERT_COOLDOWN", "3600"))
 
 CGROUP_USAGE = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
@@ -94,7 +99,6 @@ class Job:
             "--resource",
             self.resource,
             "--no-sync",
-            "--no-progress",
             "--plan-file",
             self.plan_file,
             *self.extra_args,
@@ -243,6 +247,8 @@ def launch(job: Job) -> None:
 
 # pid -> (timestamp, rss) of the previous observation
 _rss_history: dict[int, tuple[float, int]] = {}
+# job -> best sustained throughput seen, in MKeys/s
+_speed_baseline: dict[str, float] = {}
 
 
 def check_memory(job: Job) -> None:
@@ -283,6 +289,65 @@ def check_memory(job: Job) -> None:
             )
 
 
+_SPEED_RE = re.compile(r"(?:Speed:\s*)?([0-9]+(?:\.[0-9]+)?)\s*(M|G)(?:Key|Keys|K)/s", re.I)
+
+
+def latest_speed_mkeys(job: Job) -> float | None:
+    """Most recent throughput the solver reported, in MKeys/s."""
+    log_path = WORKSPACE / job.log_file
+    try:
+        with open(log_path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - 65536))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    best = None
+    for line in tail.replace("\r", "\n").splitlines():
+        if "GPU 0.00" in line:  # Kangaroo prints a zero GPU column on CPU builds
+            line = line.replace("GPU 0.00 MK/s", "")
+        match = _SPEED_RE.search(line)
+        if match:
+            value = float(match.group(1))
+            best = value * 1000 if match.group(2).upper() == "G" else value
+    return best
+
+
+def check_throughput(job: Job) -> None:
+    speed = latest_speed_mkeys(job)
+    if speed is None:
+        return
+    baseline = _speed_baseline.get(job.name)
+    if baseline is None or speed > baseline:
+        # Track the best sustained rate seen; a healthy job returns to it.
+        _speed_baseline[job.name] = speed
+        log(f"  {job.name}: throughput {speed:,.0f} MKeys/s (baseline)")
+        return
+    log(f"  {job.name}: throughput {speed:,.0f} MKeys/s (baseline {baseline:,.0f})")
+    if speed < baseline * SPEED_ALERT_FRACTION:
+        alert(
+            f"slow-{job.name}",
+            f"{job.name}: throughput {speed:,.0f} MKeys/s is only "
+            f"{100 * speed / baseline:.0f}% of the {baseline:,.0f} MKeys/s baseline. "
+            "A second solver sharing the same GPU halves it — check for stray processes.",
+        )
+
+
+def rotate_log(job: Job) -> None:
+    """Keep the tail; progress output is unbounded over weeks."""
+    path = WORKSPACE / job.log_file
+    try:
+        if path.stat().st_size <= LOG_MAX_BYTES:
+            return
+        with open(path, "rb") as handle:
+            handle.seek(-LOG_MAX_BYTES // 4, os.SEEK_END)
+            tail = handle.read()
+        path.write_bytes(b"[btc-puzzle-lab watchdog] log truncated\n" + tail)
+        log(f"  rotated {job.log_file}")
+    except OSError as exc:
+        log(f"  could not rotate {job.log_file}: {exc}")
+
+
 def check_job(job: Job) -> None:
     watchers = pids_matching(job.pattern)
     if not watchers:
@@ -300,6 +365,8 @@ def check_job(job: Job) -> None:
             "so the search may be making no cumulative progress.",
         )
     check_memory(job)
+    check_throughput(job)
+    rotate_log(job)
 
 
 def main() -> int:

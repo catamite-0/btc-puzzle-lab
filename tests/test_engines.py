@@ -5,6 +5,7 @@ from unittest.mock import patch
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.engines import (
     _append_result_files,
+    _run,
     bitcrack_keyspace,
     parse_privkey_text,
     redact_engine_line,
@@ -186,3 +187,21 @@ def test_engine_stops_as_soon_as_result_file_has_the_key(tmp_path, monkeypatch):
     elapsed = time.monotonic() - started
     assert result.secret == 0x15
     assert elapsed < 10, f"should not wait out the 30s budget, took {elapsed:.1f}s"
+
+
+def test_carriage_return_progress_is_captured(tmp_path, monkeypatch):
+    # RCKangaroo/BitCrack/Kangaroo refresh progress with \r and never emit \n.
+    # A readline() based reader sees none of it, which is how a run can drop to
+    # half speed unnoticed.
+    fake = tmp_path / "keyhunt"
+    fake.write_text(
+        "#!/bin/sh\nprintf 'Speed: 17600 MKeys/s\\rSpeed: 8000 MKeys/s\\r'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("KEYHUNT_PATH", str(fake))
+    code, output = _run(
+        [str(fake)], cwd=tmp_path, timeout=15, progress=False, expected_address=None
+    )
+    assert "Speed: 17600 MKeys/s" in output
+    assert "Speed: 8000 MKeys/s" in output
