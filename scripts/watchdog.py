@@ -40,6 +40,14 @@ load_dotenv(WORKSPACE / "config" / ".env", override=False)
 from btc_puzzle_lab.notify import send_webhook  # noqa: E402
 from btc_puzzle_lab.settings import get_notify_settings  # noqa: E402
 
+# Long runs should not be launched from an editable checkout: editing src/ would
+# change what the next relaunch executes, so a broken commit stops the search.
+# Point this at a frozen install (`pip install .` into its own venv) and the
+# working tree stays free for development.
+CLI_BIN = Path(
+    os.environ.get("BTC_PUZZLE_LAB_BIN", str(WORKSPACE / ".venv-dev" / "bin" / "btc-puzzle-lab"))
+)
+
 CHECK_INTERVAL = float(os.environ.get("WATCHDOG_INTERVAL", "300"))
 # Warn while there is still time to act, not once the kill is imminent.
 PROJECTED_OOM_WARN_MINUTES = float(os.environ.get("WATCHDOG_OOM_WARN_MINUTES", "90"))
@@ -92,7 +100,7 @@ class Job:
 
     def command(self) -> list[str]:
         return [
-            str(WORKSPACE / ".venv-dev" / "bin" / "btc-puzzle-lab"),
+            str(CLI_BIN),
             "watch",
             "--ids",
             str(self.puzzle_id),
