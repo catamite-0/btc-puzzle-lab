@@ -92,14 +92,50 @@ class StrategyPlan:
         return f"{' '.join(bits)} — {self.reason}"
 
 
+_CGROUP_LIMIT_PATHS = (
+    Path("/sys/fs/cgroup/memory.max"),  # cgroup v2
+    Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),  # cgroup v1
+)
+
+
+def cgroup_limit_mb() -> int | None:
+    """Memory this process may actually use, when a cgroup caps it."""
+    for path in _CGROUP_LIMIT_PATHS:
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if raw == "max":
+            return None
+        try:
+            limit = int(raw)
+        except ValueError:
+            continue
+        # v1 reports a huge sentinel rather than an explicit "unlimited".
+        if limit <= 0 or limit > (1 << 62):
+            return None
+        return limit // (1024 * 1024)
+    return None
+
+
 def _mem_mb() -> int:
+    """Usable memory, not the machine's.
+
+    /proc/meminfo reports the host inside a container: this box advertises
+    377 GB while the cgroup caps it at 116 GB. Planning against the larger
+    number is how a growing DP table walks into the OOM killer.
+    """
+    total = None
     try:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
             if line.startswith("MemTotal:"):
-                return int(line.split()[1]) // 1024
+                total = int(line.split()[1]) // 1024
+                break
     except (OSError, ValueError, IndexError):
-        pass
-    return LOW_MEM_MB
+        total = None
+    limit = cgroup_limit_mb()
+    candidates = [value for value in (total, limit) if value]
+    return min(candidates) if candidates else LOW_MEM_MB
 
 
 def _disk_free_mb(path: Path | None = None) -> int | None:

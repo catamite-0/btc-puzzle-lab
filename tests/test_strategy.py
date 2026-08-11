@@ -1,5 +1,10 @@
 from btc_puzzle_lab.catalog import Puzzle, get_puzzle
-from btc_puzzle_lab.strategy import HostProfile, plan_strategy
+from btc_puzzle_lab.strategy import (
+    HostProfile,
+    _mem_mb,
+    cgroup_limit_mb,
+    plan_strategy,
+)
 
 
 def _host(
@@ -130,3 +135,21 @@ def test_dp_override_prevents_oom_on_wide_ranges(monkeypatch):
     assert plan_strategy(puzzle, host=host).dp == 30
     monkeypatch.delenv("BTC_PUZZLE_LAB_DP")
     assert plan_strategy(puzzle, host=host).dp != 30
+
+
+def test_mem_probe_respects_cgroup_limit(tmp_path, monkeypatch):
+    # /proc/meminfo reports the host inside a container. Planning against it is
+    # how a growing DP table walks into the OOM killer.
+    limit = tmp_path / "memory.max"
+    limit.write_text(str(8 * 1024**3), encoding="utf-8")
+    monkeypatch.setattr("btc_puzzle_lab.strategy._CGROUP_LIMIT_PATHS", (limit,))
+    assert cgroup_limit_mb() == 8192
+    assert _mem_mb() <= 8192
+
+
+def test_mem_probe_ignores_unlimited_cgroup(tmp_path, monkeypatch):
+    limit = tmp_path / "memory.max"
+    limit.write_text("max", encoding="utf-8")
+    monkeypatch.setattr("btc_puzzle_lab.strategy._CGROUP_LIMIT_PATHS", (limit,))
+    assert cgroup_limit_mb() is None
+    assert _mem_mb() > 0
