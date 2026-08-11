@@ -273,6 +273,12 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     window = int(knobs["window"] or 1_000_000)
     max_chunks = knobs["max_chunks"]
     dp = int(knobs["dp"] or 16)
+    # Kangaroo DP bits decide how fast the distinguished-point table eats RAM.
+    # The default suits small ranges; on a wide range it can fill a container's
+    # memory in hours and get the solver OOM-killed, losing all accumulated work.
+    env_dp = _env_int("BTC_PUZZLE_LAB_DP")
+    if env_dp and env_dp > 0:
+        dp = env_dp
     # Operator override: pin the engine (and therefore the cpu/gpu slot) instead of
     # letting availability decide. batch._job_status still blocks impossible picks.
     forced = os.environ.get("BTC_PUZZLE_LAB_ENGINE", "").strip().lower()
@@ -436,7 +442,8 @@ def format_host_profile(profile: HostProfile | None = None) -> str:
         "  compute     : high CPU/RAM — larger chunks/windows/threads",
         "",
         "env overrides: BTC_PUZZLE_LAB_CPUS, BTC_PUZZLE_LAB_MEM_MB, BTC_PUZZLE_LAB_GPU, "
-        "BTC_PUZZLE_LAB_THREADS",
+        "BTC_PUZZLE_LAB_THREADS, "
+        "BTC_PUZZLE_LAB_DP",
     ]
     knobs = _resource_knobs(host)
     lines.extend(

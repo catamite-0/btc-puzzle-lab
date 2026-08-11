@@ -117,3 +117,16 @@ def test_unsolved_pubkey_without_engines_names_kangaroo_algorithm():
     plan = plan_strategy(puzzle, host=_host())
     assert plan.engine == "rckangaroo"
     assert "RCKANGAROO_PATH" in plan.reason
+
+
+def test_dp_override_prevents_oom_on_wide_ranges(monkeypatch):
+    # Default dp fills a container's RAM with distinguished points in hours on a
+    # wide range; the solver is OOM-killed and all accumulated work is lost.
+    host = _host(cpus=8, mem_mb=65536, engines={"rckangaroo"})
+    puzzle = get_puzzle(40)
+    assert plan_strategy(puzzle, host=host).engine == "rckangaroo"
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_DP", "30")
+    assert plan_strategy(puzzle, host=host).dp == 30
+    monkeypatch.delenv("BTC_PUZZLE_LAB_DP")
+    assert plan_strategy(puzzle, host=host).dp != 30
