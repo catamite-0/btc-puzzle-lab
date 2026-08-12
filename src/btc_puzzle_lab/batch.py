@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from btc_puzzle_lab.audit import fetch_balance_sats
 from btc_puzzle_lab.catalog import Puzzle, load_puzzles
 from btc_puzzle_lab.coverage import load_coverage
 from btc_puzzle_lab.engines import resolve_binary
@@ -153,6 +155,46 @@ def _classify_job(plan: StrategyPlan, puzzle: Puzzle) -> tuple[JobStatus, str | 
             return "blocked", f"{plan.engine} needs pubkey_compressed_hex"
         return "ready", None
     return "blocked", f"unsupported engine: {plan.engine}"
+
+
+_PRIZE_CACHE: dict[str, tuple[float, int | None]] = {}
+_PRIZE_CACHE_TTL = 3600.0
+
+
+def prize_is_gone(puzzle: Puzzle, *, timeout: float = 15.0) -> bool:
+    """True when the chain says this target has already been swept.
+
+    The bundled catalog is a snapshot: an entry keeps its prize and its unsolved
+    status long after someone has taken it. #135 was chosen as the best GPU target
+    on exactly that basis and had been emptied two weeks earlier, so a hit would
+    have had nothing to sweep.
+
+    Only applies to targets we are hunting a prize on. Practice entries have a
+    known solution and were swept years ago; drilling the pipeline against them is
+    the point, so a zero balance there is expected rather than disqualifying.
+
+    Network failures return False — a flaky explorer must not stop work.
+    """
+    if puzzle.practice_solution is not None:
+        return False
+    if os.environ.get("BTC_PUZZLE_LAB_SKIP_PRIZE_CHECK", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    now = time.monotonic()
+    cached = _PRIZE_CACHE.get(puzzle.address)
+    if cached is not None and now - cached[0] < _PRIZE_CACHE_TTL:
+        balance = cached[1]
+    else:
+        try:
+            balance = fetch_balance_sats(puzzle.address, timeout=timeout)
+        except Exception:  # noqa: BLE001 — availability must not gate the search
+            balance = None
+        _PRIZE_CACHE[puzzle.address] = (now, balance)
+    return balance == 0
 
 
 def _match_filters(
@@ -305,6 +347,19 @@ def run_batch(
                 continue
             job.job_status = "ready"
             job.blocker = None
+        # Last gate before compute: a target whose prize is already gone is not
+        # worth a GPU-hour, whatever the catalog snapshot claims.
+        if prize_is_gone(catalog_by_id[job.puzzle_id]):
+            job.job_status = "blocked"
+            job.blocker = "prize already swept (chain balance is 0)"
+            job.updated_at = utc_now()
+            log_event(
+                "job_prize_gone",
+                puzzle_id=job.puzzle_id,
+                address=catalog_by_id[job.puzzle_id].address,
+            )
+            skipped += 1
+            continue
         runnable.append(job)
 
     log_event(
