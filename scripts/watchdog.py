@@ -116,11 +116,14 @@ class Job:
 
 JOBS = [
     Job(
-        name="p135-gpu",
-        puzzle_id=135,
+        # #135 was retired on 2026-08-11: its 13.5 BTC was swept on 2026-07-28, so
+        # the bundled catalog snapshot still showing it unsolved was simply stale.
+        # #140 is the smallest pubkey target whose prize is still on chain.
+        name="p140-gpu",
+        puzzle_id=140,
         resource="gpu",
-        plan_file="state/plan_135.json",
-        log_file="logs/p135-gpu.log",
+        plan_file="state/plan_140.json",
+        log_file="logs/p140-gpu.log",
         # dp=30 keeps the DP table flat; dp=16 filled the container in ~3.4h.
         env={"BTC_PUZZLE_LAB_DP": "30"},
     ),
