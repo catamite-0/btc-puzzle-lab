@@ -6,11 +6,8 @@ Defaults stay safe: transfer disabled + dry-run.
 ## Prerequisites
 
 ```bash
-cp config/.env.example config/.env
-# edit:
-#   AUTO_TRANSFER_ENABLED=true
-#   AUTO_TRANSFER_DRY_RUN=true
-#   AUTO_TRANSFER_DEST_ADDR=<your cold wallet>
+btc-puzzle-lab config --dest <your cold wallet> --notify https://...
+# or copy config/.env.example → config/.env and set AUTO_TRANSFER_DEST_ADDR=
 ```
 
 Optional knobs:

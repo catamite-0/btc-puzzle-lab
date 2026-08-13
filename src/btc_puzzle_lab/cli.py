@@ -22,10 +22,27 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
-from btc_puzzle_lab.loop import format_loop_result, format_watch_result, run_once, run_watch
+from btc_puzzle_lab.loop import (
+    LoopResult,
+    WatchResult,
+    format_loop_result,
+    format_watch_result,
+    run_once,
+    run_watch,
+)
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+from btc_puzzle_lab.start import (
+    config_field_errors,
+    format_operator_config,
+    format_start_prep,
+    merge_operator_config,
+    operator_errors,
+    persist_operator_config,
+    prepare_start,
+    run_start,
+)
 from btc_puzzle_lab.strategy import (
     adapt_recommendations,
     format_host_profile,
@@ -79,6 +96,103 @@ def _print_transfer(result: TransferResult) -> None:
         print(f"  txid={result.txid}")
     if result.chain_status:
         print(f"  chain_status={result.chain_status}")
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    changing = any(
+        getattr(args, name) is not None
+        for name in ("dest", "notify", "telegram_token", "telegram_chat")
+    )
+    cfg = merge_operator_config(
+        dest_addr=args.dest,
+        webhook_url=args.notify,
+        telegram_bot_token=args.telegram_token,
+        telegram_chat_id=args.telegram_chat,
+    )
+    if changing:
+        errors = config_field_errors(cfg)
+        if errors:
+            print("error: " + "\n".join(errors), file=sys.stderr)
+            return 2
+        persist_operator_config(cfg)
+    print(format_operator_config(cfg if changing else None))
+    still = [
+        line
+        for line in operator_errors(cfg, require_puzzle=False)
+        if line.startswith("set a sweep") or line.startswith("set notify")
+    ]
+    if still:
+        print("still needed:")
+        for line in still:
+            print(f"  {line}")
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    puzzle = args.puzzle_opt if args.puzzle_opt is not None else args.puzzle
+    cfg = merge_operator_config(
+        dest_addr=args.dest,
+        webhook_url=args.notify,
+        telegram_bot_token=args.telegram_token,
+        telegram_chat_id=args.telegram_chat,
+        puzzle_id=puzzle,
+        live=True if args.live else None,
+    )
+    errors = operator_errors(cfg, require_puzzle=True)
+    if errors:
+        print("error: " + "\n".join(errors), file=sys.stderr)
+        print(
+            "\n"
+            "set dest + notify once, then pass a puzzle id:\n"
+            "  btc-puzzle-lab config --dest <btc-address> --notify https://...\n"
+            "  btc-puzzle-lab start 71",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        prep = prepare_start(
+            cfg,
+            sync=not args.no_sync,
+            install=not args.no_install,
+            selfcheck=not args.no_selfcheck,
+        )
+    except KeyError as exc:
+        print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    watch = not args.once
+    print(format_start_prep(prep, watch=watch))
+    if prep.blocker:
+        print(f"error: {prep.blocker}", file=sys.stderr)
+        return 1
+    if args.prepare_only:
+        return 0
+    result = run_start(
+        prep,
+        watch=watch,
+        require_doctor=not args.no_doctor,
+        progress=not args.no_progress,
+        timeout=_loop_timeout(args),
+        max_hours=args.max_hours,
+        max_passes=args.max_passes,
+    )
+    if isinstance(result, WatchResult):
+        print(format_watch_result(result))
+        if result.last is not None:
+            for item in result.last.transfers:
+                _print_transfer(item)
+        if result.stopped_reason == "hit":
+            return 0
+        if result.last is not None and not result.last.ok:
+            return 1
+        return 0
+    assert isinstance(result, LoopResult)
+    print(format_loop_result(result))
+    for item in result.transfers:
+        _print_transfer(item)
+    return 0 if result.ok else 1
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -532,10 +646,119 @@ def cmd_watch(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
-        description="Practice lab for Bitcoin Puzzle Transaction workflows",
+        description=(
+            "Bitcoin Puzzle lab. Operator path: config dest+notify once, "
+            "then start <puzzle> (adapt → fetch/compile → run)."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_config = sub.add_parser(
+        "config",
+        help="set sweep dest + notify (shared by every start)",
+    )
+    p_config.add_argument(
+        "--dest",
+        default=None,
+        help="BTC address to sweep into on a hit",
+    )
+    p_config.add_argument(
+        "--notify",
+        "-n",
+        default=None,
+        help="hit webhook URL (Discord / Slack / ntfy / https)",
+    )
+    p_config.add_argument(
+        "--telegram-token",
+        default=None,
+        help="Telegram bot token (optional; combine with --telegram-chat)",
+    )
+    p_config.add_argument(
+        "--telegram-chat",
+        default=None,
+        help="Telegram chat id",
+    )
+    p_config.set_defaults(func=cmd_config)
+
+    p_start = sub.add_parser(
+        "start",
+        help="pick a solver for this host, fetch/compile it, run until hit",
+    )
+    p_start.add_argument(
+        "puzzle",
+        nargs="?",
+        type=int,
+        help="puzzle id, e.g. 71 (or last id saved by a previous start)",
+    )
+    p_start.add_argument(
+        "--puzzle",
+        "-p",
+        dest="puzzle_opt",
+        type=int,
+        default=None,
+        help="puzzle id (same as positional)",
+    )
+    p_start.add_argument(
+        "--dest",
+        default=None,
+        help="BTC sweep address (otherwise config/.env)",
+    )
+    p_start.add_argument(
+        "--notify",
+        "-n",
+        default=None,
+        help="webhook URL (otherwise config/.env)",
+    )
+    p_start.add_argument("--telegram-token", default=None)
+    p_start.add_argument("--telegram-chat", default=None)
+    p_start.add_argument(
+        "--live",
+        action="store_true",
+        help="broadcast the sweep (requires AUTO_TRANSFER_LIVE_CONFIRM in config/.env)",
+    )
+    p_start.add_argument(
+        "--once",
+        action="store_true",
+        help="single pass instead of watch-until-hit",
+    )
+    p_start.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="adapt + install, then exit without searching",
+    )
+    p_start.add_argument(
+        "--no-install",
+        action="store_true",
+        help="do not clone/build a missing solver",
+    )
+    p_start.add_argument(
+        "--no-selfcheck",
+        action="store_true",
+        help="skip known-answer check after a fresh compile",
+    )
+    p_start.add_argument("--no-sync", action="store_true", help="skip catalog import")
+    p_start.add_argument("--no-doctor", action="store_true", help="skip blocking doctor gate")
+    p_start.add_argument("--no-progress", action="store_true")
+    p_start.add_argument(
+        "--max-hours",
+        type=float,
+        default=None,
+        help="stop watch after this many hours",
+    )
+    p_start.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="stop an external solver after N seconds",
+    )
+    p_start.add_argument(
+        "--max-passes",
+        type=int,
+        default=None,
+        help="stop watch after N once passes",
+    )
+    p_start.set_defaults(func=cmd_start)
 
     p_list = sub.add_parser("list", help="list puzzles in the active catalog")
     p_list.set_defaults(func=cmd_list)

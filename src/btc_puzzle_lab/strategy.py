@@ -516,11 +516,14 @@ def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
         tips.append("low free disk (<512 MiB) — coverage/batch state may fail to persist")
     if host.gpu or host.tier in {"gpu", "compute"}:
         tips.append(
-            "GPU VPS: one card → one puzzle; "
-            "btc-puzzle-lab once --ids 71 --resource gpu"
+            "GPU VPS: set dest + notify once, then "
+            "btc-puzzle-lab start 71"
         )
     else:
-        tips.append("run: btc-puzzle-lab once --resource cpu  (or plan/batch manually)")
+        tips.append(
+            "run: btc-puzzle-lab start <puzzle-id>  "
+            "(after: btc-puzzle-lab config --dest <addr> --notify <url>)"
+        )
     return tips
 
 

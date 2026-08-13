@@ -1,26 +1,42 @@
-# Full loop (`once`)
+# Full loop (`start` / `once`)
 
-Closed-loop path for this lab:
+Product path:
 
 ```text
-sync unsolved catalog → host strategy → one resource slot → search
-        → hit audit → optional sweep (dry-run / gated live)
+config dest+notify  →  start <puzzle>
+    host probe → pick engine → clone/build → watch until hit
+        → audit → notify → dry-run sweep (live still gated)
 ```
 
-This is the product path. It is **not** the public btcpuzzle.info pool client.
+This is **not** the public btcpuzzle.info pool client.
 
 ## Commands
 
 ```bash
-btc-puzzle-lab once
-# typical 5090 focus (holds GPU until BitCrack exits / you Ctrl-C):
+# once per machine (or whenever dest/notify change):
+btc-puzzle-lab config --dest <your-btc-address> --notify https://ntfy.sh/your-topic
+
+# each hunt — adapts to this host and installs the chosen solver:
+btc-puzzle-lab start 71
+
+# typical 5090 focus still works as the manual loop:
 btc-puzzle-lab once --ids 71 --resource gpu
 
 # budgeted VPS session (stops solvers at the wall clock):
 btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6
 ```
 
-Defaults for `once` / `watch`:
+`start` defaults:
+
+| Step | What it does |
+|---|---|
+| catalog | `import-catalog` from the bundled export |
+| method | `plan_strategy` for this host + puzzle |
+| install | clone/build that engine into `bin/` if missing |
+| run | `watch` that puzzle until a hit (`--once` for a single pass) |
+| hit | audit → notify (no keys) → sweep to dest (dry-run unless `--live`) |
+
+`once` / `watch` flags are unchanged:
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -50,6 +66,7 @@ Do not split one GPU across multiple unsolved address searches.
 Transfer uses the existing policy in [TRANSFER.md](TRANSFER.md):
 
 - `AUTO_TRANSFER_ENABLED=false` by default → sweep reports `skipped`
+- `start` / `config --dest` turns transfer **on** (still dry-run until `--live`)
 - dry-run until you explicitly enable live confirm
 - `once --no-transfer` if you only want search + audit
 

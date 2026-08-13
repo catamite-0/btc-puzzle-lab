@@ -648,6 +648,7 @@ def install_engines(
                 "keyhunt": "KEYHUNT_PATH",
                 "kangaroo": "KANGAROO_PATH",
                 "bitcrack": "BITCRACK_PATH",
+                "rckangaroo": "RCKANGAROO_PATH",
             }.get(name)
             if env_key and not os.environ.get(env_key):
                 os.environ[env_key] = str(path)

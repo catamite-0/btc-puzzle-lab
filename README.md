@@ -14,18 +14,23 @@ Designing against the scheduling layer, or reusing the engine adapters elsewhere
 
 ## Quick start
 
-Local / CPU:
+Set dest and notify once, then pass a puzzle id. The lab probes the machine,
+picks an engine, clones and compiles it if needed, and runs until a hit.
 
 ```bash
 python3 -m venv .venv-dev
 source .venv-dev/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m pip install -e .
-btc-puzzle-lab engines install
-btc-puzzle-lab doctor
-btc-puzzle-lab list
-btc-puzzle-lab run 1
+
+btc-puzzle-lab config --dest <your-btc-address> --notify https://ntfy.sh/your-topic
+btc-puzzle-lab start 71
 ```
+
+`start` writes `config/.env`, imports the catalog, installs the chosen solver
+into `bin/`, then `watch`es that puzzle. Hits notify (no private keys) and
+dry-run a sweep to dest. Live broadcast still needs
+`AUTO_TRANSFER_LIVE_CONFIRM` plus `start --live`.
 
 GPU experiment pod (RunPod etc.):
 
@@ -34,8 +39,15 @@ git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/machine-bootstrap.sh
 source .venv/bin/activate
-btc-puzzle-lab once --ids 71 --resource gpu
-# details: docs/MACHINE.md , docs/LOOP.md
+btc-puzzle-lab config --dest <your-btc-address> --notify https://ntfy.sh/your-topic
+btc-puzzle-lab start 71
+```
+
+Local practice (tiny catalog, no external solver):
+
+```bash
+btc-puzzle-lab start 1 --prepare-only --no-sync --no-install
+btc-puzzle-lab run 1
 ```
 
 From a tagged release / wheel:
@@ -54,7 +66,7 @@ Writable `state/` and `config/` resolve in this order:
 2. the git checkout root (editable / `pip install -e .`)
 3. the current working directory (wheel / plain installs)
 
-Copy `config/.env.example` → `config/.env` only when exercising auto-transfer.
+`btc-puzzle-lab config` writes `config/.env`. Do not commit it.
 
 ### Cursor Cloud
 
@@ -63,15 +75,19 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 ## Stable workflow
 
 ```text
-host / adapt → engines install → once
-                 (sync → plan → one gpu/cpu slot → audit → optional sweep)
+config dest+notify → start <puzzle>
+        (host probe → pick engine → fetch/compile → watch until hit)
+                 audit → notify → optional sweep
 
 # or the same steps manually:
+host / adapt → engines install → once
 import-catalog → plan → batch → status → audit → transfer
 ```
 
 | Command | Role |
 |---|---|
+| `config` | Set sweep dest + notify webhook/Telegram (shared) |
+| `start` | Pick engine for this host, install it, run until hit |
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |

@@ -36,7 +36,11 @@ cat <<'EOF'
 
 bootstrap done.
 
-Next (full loop, one GPU slot):
+Next:
+  btc-puzzle-lab config --dest <your-btc-address> --notify https://...
+  btc-puzzle-lab start 71
+
+Or the manual loop (one GPU slot):
   btc-puzzle-lab once --ids 71 --resource gpu
 
 Or manual board:

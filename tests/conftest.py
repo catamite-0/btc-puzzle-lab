@@ -8,6 +8,17 @@ _ENGINE_PATH_VARS = (
     "BITCRACK_PATH",
     "RCKANGAROO_PATH",
 )
+_OPERATOR_VARS = (
+    "AUTO_TRANSFER_ENABLED",
+    "AUTO_TRANSFER_DRY_RUN",
+    "AUTO_TRANSFER_DEST_ADDR",
+    "AUTO_TRANSFER_LIVE_CONFIRM",
+    "NOTIFY_ENABLED",
+    "NOTIFY_WEBHOOK_URL",
+    "NOTIFY_TELEGRAM_BOT_TOKEN",
+    "NOTIFY_TELEGRAM_CHAT_ID",
+    "BTC_PUZZLE_LAB_PUZZLE",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +40,7 @@ def isolated_workspace(tmp_path, monkeypatch):
     ``BTC_PUZZLE_LAB_HOME`` themselves.
     """
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
-    for var in _ENGINE_PATH_VARS:
+    for var in (*_ENGINE_PATH_VARS, *_OPERATOR_VARS):
         monkeypatch.delenv(var, raising=False)
     clear_path_cache()
     yield

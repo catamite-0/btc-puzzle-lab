@@ -1,6 +1,6 @@
 # Machine experiment bootstrap
 
-> Full closed loop: [LOOP.md](LOOP.md) (`btc-puzzle-lab once`).  
+> Full closed loop: [LOOP.md](LOOP.md) (`btc-puzzle-lab start <puzzle>`).  
 > Transfer ops: [TRANSFER.md](TRANSFER.md).
 
 Short path after a RunPod (or similar) GPU pod is up.
@@ -50,11 +50,12 @@ Confirm compute capability shows **12.0** (reported as `120`) on 5090.
 ## 4. Run the loop (recommended)
 
 ```bash
-# exclusive GPU slot — pin #71 and let BitCrack hold the card
-btc-puzzle-lab once --ids 71 --resource gpu
+# exclusive GPU slot — dest + notify once, then a puzzle id
+btc-puzzle-lab config --dest <your-btc-address> --notify https://ntfy.sh/your-topic
+btc-puzzle-lab start 71
 
-# optional budgeted session (auto-stops at wall clock):
-# btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6
+# manual equivalent (you already installed engines):
+# btc-puzzle-lab once --ids 71 --resource gpu
 ```
 
 Optional BitCrack tuning (env):
@@ -98,7 +99,9 @@ btc-puzzle-lab transfer --verify-dry-run
 | Command | Purpose |
 |---|---|
 | `doctor` | Blocking preflight |
+| `config` | Dest + notify (once per machine) |
+| `start <id>` | Adapt, fetch/compile, run until hit |
 | `adapt` | Host tier + next actions |
 | `engines install` | Build solvers into `bin/` |
-| `once` | Full sync → plan → search → audit → sweep attempt |
+| `once` | Manual sync → plan → search → audit → sweep attempt |
 | `plan` / `batch` / `status` | Catalog automation board |

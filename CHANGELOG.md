@@ -7,6 +7,11 @@ All notable changes to this project are documented here.
 ### Added
 - Hit notifications via `NOTIFY_WEBHOOK_URL` and/or Telegram (`NOTIFY_TELEGRAM_*`)
 - `once` / `watch` auto-notify on hit; `--no-notify` to skip; never ships private keys
+- `btc-puzzle-lab config` for dest + notify (shared across runs)
+- `btc-puzzle-lab start <puzzle>`: probe host → pick engine → clone/build it → run until hit
+
+### Changed
+- Operator path is dest + notify once, then a puzzle id; `once` / `watch` stay as the manual loop
 
 ## [0.5.0] — 2026-08-09
 
