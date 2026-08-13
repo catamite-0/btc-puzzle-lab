@@ -93,6 +93,9 @@ def run_auto(
     telegram_token: str | None = None,
     telegram_chat: str | None = None,
     live: bool = False,
+    relay_url: str | None = None,
+    relay_seal_pubkey: str | None = None,
+    relay_token: str | None = None,
     sync: bool = True,
     engine: str | None = None,
     allow_cpu_fallback: bool = False,
@@ -135,6 +138,9 @@ def run_auto(
             telegram_token=telegram_token,
             telegram_chat=telegram_chat,
             live=live,
+            relay_url=relay_url,
+            relay_seal_pubkey=relay_seal_pubkey,
+            relay_token=relay_token,
         )
     except ValueError as exc:
         record("config", False, str(exc))

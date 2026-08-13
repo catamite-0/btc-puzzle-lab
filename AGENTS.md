@@ -7,8 +7,10 @@
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
   Post-hit ops: `docs/TRANSFER.md` (dry-run → verify → live / broadcast-dry-run).
-- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram; payloads must never include
-  private keys or signed tx hex. Keep independent from coinsense Discord/Gemini.
+- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram, or sealed `RELAY_URL` to the
+  control VPS `hub` when those are blocked. Payloads must never include
+  plaintext private keys or signed tx hex. `relay-keygen` / `hub` / `unseal`.
+  Keep independent from coinsense Discord/Gemini.
 - Never commit `state/`, `config/.env`, `dist/`, or hit/dry-run files.
 - Do not print private keys or signed tx hex in chat, logs, commits, or PR text.
   CLI may show keys only with explicit `--show-key`.
@@ -17,10 +19,10 @@
 - Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
   bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
   `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
-- Automation: `auto <id>` is the default entry point (config → catalog → host →
-  engine → build+verify → watch); docs in `docs/AUTO.md`. Manual path is
-  `host` / `adapt` → `engines install` → `once` / `watch` (or `plan` → `batch` →
-  `status`). Full loop docs: `docs/LOOP.md`.
+- Automation: `auto <id>` is the default hunt entry (config → catalog → host →
+  engine → build+verify → watch); docs in `docs/AUTO.md`. Restricted boxes POST
+  sealed hits to `hub` on the always-on control VPS. Manual path is
+  `host` / `adapt` → `engines install` → `once` / `watch`. Full loop docs: `docs/LOOP.md`.
 - Engine choice for `auto` lives in `recommend.py` and must stay inventory-blind:
   it reads the target and the host, never `available_engines()` (ARCHITECTURE §5).
 - Resource model: one machine occupies one scarce slot (`gpu` or `cpu`);

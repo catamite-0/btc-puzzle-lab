@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- Control VPS hub: hunt boxes `auto --relay https://<control>:8787/hit`; the
+  always-on host runs `hub` to unseal, notify, and sweep (`RELAY_TOKEN`,
+  `relay-keygen`). Dest stays on the hub, not on hunt machines.
+
 ## [0.6.0] — 2026-08-13
 
 Out-of-the-box single-target automation, plus Taproot payout addresses.

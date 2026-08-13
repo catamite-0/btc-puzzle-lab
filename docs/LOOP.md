@@ -69,6 +69,21 @@ NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic   # or Discord/Slack webhook
 `once` / `watch` send notify automatically when enabled. Disable per-run with `--no-notify`.
 Payload includes puzzle id, address, engine, audit/transfer status only.
 
+## Split: hunt box vs control VPS
+
+The always-on VPS is **controller + executor**. Hunt boxes only search (`auto`)
+and POST a sealed hit. `config/relay-secret` stays on the control host.
+
+```text
+hunt:  auto 140 --relay https://control:8787/hit
+control hub:  auth → unseal → HITS.jsonl → audit → Discord/Telegram → sweep dest
+```
+
+See [AUTO.md](AUTO.md) for the command split. Failed hunt POSTs retry from
+`state/relay_outbox.jsonl` (`relay-flush`). Ciphertext only.
+
+## Long GPU runs
+
 ## Long GPU runs
 
 External solvers now stream redacted logs (no full stdout buffering) and honor

@@ -55,10 +55,15 @@ class NotifySettings:
     webhook_url: str
     telegram_bot_token: str
     telegram_chat_id: str
+    relay_url: str = ""
+    relay_seal_pubkey: str = ""
+    relay_token: str = ""
 
     @property
     def configured(self) -> bool:
         if self.webhook_url:
+            return True
+        if self.relay_url:
             return True
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
@@ -125,17 +130,33 @@ def get_notify_settings() -> NotifySettings:
         webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
         telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
+        relay_url=os.getenv("RELAY_URL", "").strip(),
+        relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
+        relay_token=os.getenv("RELAY_TOKEN", "").strip(),
     )
 
 
 def validate_notify_settings(settings: NotifySettings) -> list[str]:
     errors: list[str] = []
+    if settings.relay_url:
+        parsed = settings.relay_url.lower()
+        if not (parsed.startswith("https://") or parsed.startswith("http://")):
+            errors.append("RELAY_URL must be an http(s) URL")
+        if settings.relay_seal_pubkey:
+            from btc_puzzle_lab.relay import is_seal_pubkey
+
+            if not is_seal_pubkey(settings.relay_seal_pubkey):
+                errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
+        if settings.relay_token and len(settings.relay_token) < 16:
+            errors.append("RELAY_TOKEN must be at least 16 characters")
+    elif settings.relay_seal_pubkey:
+        errors.append("RELAY_SEAL_PUBKEY set but RELAY_URL is empty")
     if not settings.enabled:
         return errors
     if not settings.configured:
         errors.append(
-            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL nor "
-            "NOTIFY_TELEGRAM_BOT_TOKEN+NOTIFY_TELEGRAM_CHAT_ID is set"
+            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL, Telegram, "
+            "nor RELAY_URL is set"
         )
     if settings.webhook_url:
         parsed = settings.webhook_url.lower()
@@ -155,8 +176,11 @@ def format_notify_policy(settings: NotifySettings | None = None) -> str:
         channels.append("webhook")
     if cfg.telegram_bot_token and cfg.telegram_chat_id:
         channels.append("telegram")
+    if cfg.relay_url:
+        channels.append("relay+seal" if cfg.relay_seal_pubkey else "relay")
     ch = ",".join(channels) if channels else "(none)"
-    return f"enabled={cfg.enabled} channels={ch}"
+    token = "set" if cfg.relay_token else "unset"
+    return f"enabled={cfg.enabled} channels={ch} relay_token={token}"
 
 
 def ensure_config_dir() -> Path:
@@ -168,7 +192,7 @@ def ensure_config_dir() -> Path:
 
 _ENV_HEADER = (
     "# btc-puzzle-lab local config. Never commit this file.",
-    "# Written by `btc-puzzle-lab auto`; hand edits are preserved.",
+    "# Written by `btc-puzzle-lab auto` / `config`; hand edits are preserved.",
     "# Full option list with comments: config/.env.example",
 )
 
@@ -225,6 +249,8 @@ class ConfigUpdate:
             bits.append(f"sweep dest={self.dest_addr} mode={mode}")
         if self.notify_channels:
             bits.append(f"notify={','.join(self.notify_channels)}")
+        if any(key.startswith("RELAY_") for key in self.keys):
+            bits.append("relay=set")
         return "; ".join(bits)
 
 
@@ -235,16 +261,22 @@ def bootstrap_config(
     telegram_token: str | None = None,
     telegram_chat: str | None = None,
     live: bool = False,
+    relay_url: str | None = None,
+    relay_seal_pubkey: str | None = None,
+    relay_token: str | None = None,
     path: Path | None = None,
 ) -> ConfigUpdate:
-    """Persist the three things an unattended run needs: where funds go, where
-    alerts go, and whether broadcasting is authorised.
+    """Persist payout, alert, and optional hunt-to-hub relay settings.
 
     Enabling a sweep destination turns auto-transfer on in **dry-run**: a hit is
     signed and written to ``state/dryrun_*.txhex`` but nothing is broadcast. Live
     broadcast is a separate, explicit decision (``live=True``) because it moves
     real BTC, and it writes the confirm phrase the transfer layer demands.
+
+    Hunt boxes can persist ``RELAY_URL`` / pubkey / token without a dest; the
+    control VPS that runs ``hub`` holds dest and ``config/relay-secret``.
     """
+    load_dotenv_files()
     values: dict[str, str] = {}
     channels: list[str] = []
 
@@ -276,6 +308,34 @@ def bootstrap_config(
         values["NOTIFY_ENABLED"] = "true"
         channels.append("telegram")
 
+    if relay_url is not None:
+        relay_url = relay_url.strip()
+        if not relay_url.lower().startswith(("http://", "https://")):
+            raise ValueError("relay URL must be an http(s) URL")
+        values["RELAY_URL"] = relay_url
+        channels.append("relay")
+    if relay_seal_pubkey is not None:
+        from btc_puzzle_lab.relay import is_seal_pubkey
+
+        relay_seal_pubkey = relay_seal_pubkey.strip()
+        if not is_seal_pubkey(relay_seal_pubkey):
+            raise ValueError("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
+        values["RELAY_SEAL_PUBKEY"] = relay_seal_pubkey
+    if relay_token is not None:
+        relay_token = relay_token.strip()
+        if len(relay_token) < 16:
+            raise ValueError("RELAY_TOKEN must be at least 16 characters")
+        values["RELAY_TOKEN"] = relay_token
+
+    effective_relay = values.get("RELAY_URL") or os.getenv("RELAY_URL", "").strip()
+    effective_pub = values.get("RELAY_SEAL_PUBKEY") or os.getenv("RELAY_SEAL_PUBKEY", "").strip()
+    if effective_relay and not effective_pub:
+        raise ValueError(
+            "--relay needs --relay-seal-pubkey from `relay-keygen` on the control VPS"
+        )
+    if effective_pub and not effective_relay:
+        raise ValueError("relay seal pubkey set but --relay URL is empty")
+
     if not values:
         return ConfigUpdate(
             path=Path(path) if path is not None else Path(ENV_FILE),
@@ -286,8 +346,6 @@ def bootstrap_config(
         )
 
     target = write_env_values(values, path=path)
-    # dotenv loads with override=False, so a value already in this process's
-    # environment would shadow what we just wrote. Apply it directly too.
     os.environ.update(values)
     return ConfigUpdate(
         path=target,

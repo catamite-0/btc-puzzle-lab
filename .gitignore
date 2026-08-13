@@ -18,5 +18,6 @@ build/
 .env
 config/.env
 config/engines.env
+config/relay-secret
 *.egg
 .venv-run/

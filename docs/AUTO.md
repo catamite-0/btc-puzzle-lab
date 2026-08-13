@@ -119,6 +119,30 @@ btc-puzzle-lab verify-dry-run state/dryrun_*.txhex --check-dest
 `--max-seconds` is a bad idea for `kangaroo` / `rckangaroo`: their restart is
 destructive, so recycling throws away the table every pass.
 
+## Split: hunt box vs control VPS
+
+Restricted hunt boxes should not sweep or talk to Discord. Run this lab as an
+always-on **control VPS** (unseal + notify + sweep) and point `auto` at it:
+
+```bash
+# control VPS (do not set RELAY_URL)
+btc-puzzle-lab relay-keygen
+btc-puzzle-lab config --dest bc1q… --notify https://discord.com/api/webhooks/...
+btc-puzzle-lab config --new-relay-token
+btc-puzzle-lab hub --host 0.0.0.0 --port 8787
+
+# hunt VPS — no dest, no relay-secret
+btc-puzzle-lab auto 140 \
+    --relay https://<control>:8787/hit \
+    --relay-seal-pubkey <hex> \
+    --relay-token <same-token>
+```
+
+`hub` requires `RELAY_TOKEN` (16+ chars) and `config/relay-secret`. Put TLS in
+front and firewall the port. Notify from the hub uses `skip_relay` so it does
+not POST back to itself. Live broadcast still needs `--live` / the confirm
+phrase **on the control VPS**.
+
 ## Build dependencies
 
 Missing compilers and headers are installed automatically via `apt-get` or `dnf`

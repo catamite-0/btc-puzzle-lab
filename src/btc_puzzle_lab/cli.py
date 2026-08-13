@@ -23,10 +23,22 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
+from btc_puzzle_lab.hub import serve_hub
 from btc_puzzle_lab.loop import format_loop_result, format_watch_result, run_once, run_watch
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
+from btc_puzzle_lab.relay import (
+    flush_outbox,
+    generate_relay_keypair,
+    generate_relay_token,
+    unseal_hit,
+    write_relay_secret,
+)
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
-from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+from btc_puzzle_lab.settings import (
+    bootstrap_config,
+    get_transfer_settings,
+    validate_transfer_settings,
+)
 from btc_puzzle_lab.strategy import (
     adapt_recommendations,
     format_host_profile,
@@ -80,6 +92,106 @@ def _print_transfer(result: TransferResult) -> None:
         print(f"  txid={result.txid}")
     if result.chain_status:
         print(f"  chain_status={result.chain_status}")
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    token = args.relay_token
+    generated: str | None = None
+    if args.new_relay_token:
+        if token:
+            print("error: pass either --relay-token or --new-relay-token", file=sys.stderr)
+            return 2
+        generated = generate_relay_token()
+        token = generated
+    try:
+        update = bootstrap_config(
+            dest_addr=args.dest,
+            notify_url=args.notify,
+            telegram_token=args.telegram_token,
+            telegram_chat=args.telegram_chat,
+            relay_url=args.relay,
+            relay_seal_pubkey=args.relay_seal_pubkey,
+            relay_token=token,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(update.format())
+    if generated:
+        print(f"relay token : {generated}")
+        print("copy onto hunt boxes: btc-puzzle-lab auto 140 --relay-token <that-token>")
+    return 0
+
+
+def cmd_relay_keygen(_: argparse.Namespace) -> int:
+    secret, pubkey = generate_relay_keypair()
+    path = write_relay_secret(secret)
+    print(f"wrote secret : {path} (mode 0600; keep this control host only)")
+    print(f"pubkey       : {pubkey}")
+    print("on this control VPS:")
+    print("  btc-puzzle-lab config --dest <btc-address> --notify https://...")
+    print("  btc-puzzle-lab config --new-relay-token")
+    print("  btc-puzzle-lab hub --host 0.0.0.0 --port 8787")
+    print("on each hunt VPS (no relay-secret, dest stays on the hub):")
+    print(
+        "  btc-puzzle-lab auto 140 --relay https://<control>:8787/hit "
+        f"--relay-seal-pubkey {pubkey} --relay-token <same-token>"
+    )
+    return 0
+
+
+def cmd_unseal(args: argparse.Namespace) -> int:
+    raw = args.token
+    if args.file:
+        raw = Path(args.file).read_text(encoding="utf-8")
+    if not raw:
+        print("error: pass a bpl1. token or --file", file=sys.stderr)
+        return 2
+    try:
+        hit = unseal_hit(raw)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"puzzle  : #{hit.puzzle_id}")
+    print(f"address : {hit.address}")
+    if hit.engine:
+        print(f"engine  : {hit.engine}")
+    if args.show_key:
+        print(f"key     : {hit.private_key_hex}")
+    else:
+        print("key     : (pass --show-key to print)")
+    return 0
+
+
+def cmd_relay_flush(_: argparse.Namespace) -> int:
+    results = flush_outbox()
+    if not results:
+        print("relay outbox: nothing pending")
+        return 0
+    fails = 0
+    for item in results:
+        mark = "ok" if item.ok else "fail"
+        print(f"relay[{mark}]: {item.message}")
+        if not item.ok:
+            fails += 1
+    return 1 if fails else 0
+
+
+def cmd_hub(args: argparse.Namespace) -> int:
+    try:
+        serve_hub(
+            host=args.host,
+            port=args.port,
+            sweep=not args.no_sweep,
+            notify=not args.no_notify,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("hub stopped")
+        return 0
+    return 0
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -551,6 +663,9 @@ def cmd_auto(args: argparse.Namespace) -> int:
         telegram_token=args.telegram_token,
         telegram_chat=args.telegram_chat,
         live=args.live,
+        relay_url=args.relay,
+        relay_seal_pubkey=args.relay_seal_pubkey,
+        relay_token=args.relay_token,
         sync=not args.no_sync,
         engine=args.engine,
         allow_cpu_fallback=args.allow_cpu_fallback,
@@ -624,6 +739,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--telegram-chat",
         default=None,
         help="Telegram chat id (needs --telegram-token)",
+    )
+    p_auto.add_argument(
+        "--relay",
+        default=None,
+        help="control hub URL, e.g. https://<control>:8787/hit (hunt boxes)",
+    )
+    p_auto.add_argument(
+        "--relay-seal-pubkey",
+        default=None,
+        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
+    )
+    p_auto.add_argument(
+        "--relay-token",
+        default=None,
+        help="shared bearer token for the control hub",
     )
     p_auto.add_argument(
         "--live",
@@ -702,6 +832,83 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_auto.add_argument("--no-progress", action="store_true", help="quiet solver progress")
     p_auto.set_defaults(func=cmd_auto)
+
+    p_config = sub.add_parser(
+        "config",
+        help="persist dest / notify / relay without starting a search",
+    )
+    p_config.add_argument("--dest", default=None, help="BTC sweep address (control VPS)")
+    p_config.add_argument("--notify", "-n", default=None, help="Discord/Slack/ntfy webhook URL")
+    p_config.add_argument("--telegram-token", default=None)
+    p_config.add_argument("--telegram-chat", default=None)
+    p_config.add_argument(
+        "--relay",
+        default=None,
+        help="hunt box: POST sealed hits here (control hub /hit)",
+    )
+    p_config.add_argument(
+        "--relay-seal-pubkey",
+        default=None,
+        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
+    )
+    p_config.add_argument(
+        "--relay-token",
+        default=None,
+        help="shared bearer token (never printed by config show)",
+    )
+    p_config.add_argument(
+        "--new-relay-token",
+        action="store_true",
+        help="generate a RELAY_TOKEN and print it once",
+    )
+    p_config.set_defaults(func=cmd_config)
+
+    p_keygen = sub.add_parser(
+        "relay-keygen",
+        help="create a seal keypair on the control VPS; copy only the pubkey to hunt boxes",
+    )
+    p_keygen.set_defaults(func=cmd_relay_keygen)
+
+    p_unseal = sub.add_parser(
+        "unseal",
+        help="decrypt a sealed solution (prints the key only with --show-key)",
+    )
+    p_unseal.add_argument("token", nargs="?", help="bpl1. token, or a pasted relay message")
+    p_unseal.add_argument("--file", default=None, help="read the token from a file")
+    p_unseal.add_argument(
+        "--show-key",
+        action="store_true",
+        help="print the recovered private key",
+    )
+    p_unseal.set_defaults(func=cmd_unseal)
+
+    p_flush = sub.add_parser(
+        "relay-flush",
+        help="retry undelivered relay outbox rows",
+    )
+    p_flush.set_defaults(func=cmd_relay_flush)
+
+    p_hub = sub.add_parser(
+        "hub",
+        help="control VPS: receive sealed hits, unseal, notify, sweep",
+    )
+    p_hub.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default 0.0.0.0; put TLS/firewall in front)",
+    )
+    p_hub.add_argument("--port", type=int, default=8787, help="listen port (default 8787)")
+    p_hub.add_argument(
+        "--no-sweep",
+        action="store_true",
+        help="record + notify only (do not call sweep_hit)",
+    )
+    p_hub.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="record + sweep only (do not post Discord/Telegram)",
+    )
+    p_hub.set_defaults(func=cmd_hub)
 
     p_list = sub.add_parser("list", help="list puzzles in the active catalog")
     p_list.set_defaults(func=cmd_list)

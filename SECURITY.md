@@ -28,10 +28,18 @@ a secret store. Prefer `--no-solutions` when you do not need practice keys.
 Never commit:
 
 - `config/.env`
+- `config/relay-secret`
 - `state/` (hits, run logs, coverage, batch plans, dry-run tx hex)
 
 Hit and dry-run files are written with mode `0600` when created by this tool.
 `state/batch_plan.json` stores routing metadata only (no private keys).
+
+The control VPS (`hub`) holds `config/relay-secret` and the sweep dest. Hunt
+boxes get only `RELAY_SEAL_PUBKEY` plus a shared `RELAY_TOKEN` (bearer auth).
+Relay payloads, outbox rows, hub HTTP responses, and webhook/Telegram bodies
+must never contain a plaintext private key. `unseal` prints the key only with
+`--show-key`. Do not set `RELAY_URL` on the hub host. Bind `hub` behind TLS
+and a firewall.
 
 Host overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`) affect strategy knobs
 only; they are not credentials.

@@ -80,6 +80,9 @@ Done. What the numbers mean:
 To leave it running for the rest of the rental:
 
   export BTC_PUZZLE_LAB_DP=30      # flat DP table; the default fills RAM in hours
-  ./.venv-run/bin/btc-puzzle-lab watch --ids 140 --resource gpu --no-sync \
-      --plan-file state/plan_140.json
+  # This GPU box is a hunt worker. Post sealed hits to the always-on control VPS:
+  ./.venv-run/bin/btc-puzzle-lab auto 140 \
+      --relay https://<control-vps>:8787/hit \
+      --relay-seal-pubkey <hex> \
+      --relay-token <token>
 EOF

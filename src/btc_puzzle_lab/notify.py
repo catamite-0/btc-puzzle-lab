@@ -201,12 +201,27 @@ def notify_hit(
     audit: AuditResult | None = None,
     transfer: TransferResult | None = None,
     settings: NotifySettings | None = None,
+    skip_relay: bool = False,
 ) -> list[NotifyResult]:
     cfg = settings or get_notify_settings()
-    if not cfg.enabled:
-        return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
-    if not cfg.configured:
-        return [NotifyResult("none", False, "notify enabled but no webhook/telegram configured")]
+    send_chat = cfg.enabled and bool(
+        cfg.webhook_url or (cfg.telegram_bot_token and cfg.telegram_chat_id)
+    )
+    send_relay = bool(cfg.relay_url) and not skip_relay
+    if not send_chat and not send_relay:
+        if skip_relay:
+            if not cfg.enabled:
+                return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
+            return [NotifyResult("none", True, "hub ingest: chat unset, relay skipped")]
+        if not cfg.enabled:
+            return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
+        return [
+            NotifyResult(
+                "none",
+                False,
+                "notify enabled but no webhook/telegram/relay configured",
+            )
+        ]
 
     text = build_hit_message(hit, audit=audit, transfer=transfer)
     embed = build_hit_embed(hit, audit=audit, transfer=transfer)
@@ -221,9 +236,9 @@ def notify_hit(
             )
 
     results: list[NotifyResult] = []
-    if cfg.webhook_url:
+    if send_chat and cfg.webhook_url:
         results.append(send_webhook(text, url=cfg.webhook_url, embed=embed))
-    if cfg.telegram_bot_token and cfg.telegram_chat_id:
+    if send_chat and cfg.telegram_bot_token and cfg.telegram_chat_id:
         results.append(
             send_telegram(
                 text,
@@ -231,6 +246,15 @@ def notify_hit(
                 chat_id=cfg.telegram_chat_id,
             )
         )
+    if send_relay:
+        from btc_puzzle_lab.relay import deliver_relay
+
+        relay = deliver_relay(
+            hit,
+            url=cfg.relay_url,
+            seal_pubkey=cfg.relay_seal_pubkey,
+        )
+        results.append(NotifyResult("relay", relay.ok, relay.message))
     log_event(
         "notify_hit",
         puzzle_id=hit.puzzle_id,
