@@ -25,7 +25,35 @@ All notable changes to this project are documented here.
 - Hit notifications via `NOTIFY_WEBHOOK_URL` and/or Telegram (`NOTIFY_TELEGRAM_*`)
 - `once` / `watch` auto-notify on hit; `--no-notify` to skip; never ships private keys
 
+- Taproot (`bc1p…`) payout addresses, via bech32m (BIP-350). Witness v0 keeps
+  bech32 and v1 requires bech32m, with a mismatch rejected rather than tolerated;
+  witness versions above 1 are refused because their spending rules are undefined,
+  so funds sent there would be non-standard and anyone-can-spend. Taproot is a
+  destination only — spending *from* a v1 output needs Schnorr signing, which this
+  lab does not implement
+
 ### Fixed
+- Witness outputs above v0 were built with the raw version byte instead of
+  `OP_1..OP_16`, so a Taproot destination would have produced a script that does
+  not encode the intended program. Unreachable before bech32m support, fixed with it
+- `parse_privkey_text` returned the first hex token on any line mentioning a
+  private key, without checking it derives the address being searched. Since `add`
+  is valid hex, a line like `priv add 5` could mask a genuine hit further down and
+  turn a solved puzzle into an address-mismatch crash
+- Multi-worker scans recorded whichever chunk finished last as the resume point.
+  Because workers complete out of order, `--resume` could restart past ranges no
+  worker had scanned; the checkpoint now advances only across the contiguous
+  completed prefix
+- `run_batch` raised a bare `KeyError` when the board outlived the catalog it was
+  built from (a full import reverted to the practice subset between `plan` and
+  `batch`). Such jobs are marked blocked with an explanation
+- The swept-prize check ran for every runnable job before the loop started, so
+  `--limit 1` still paid an explorer call per job it would never reach. It now runs
+  immediately before each job executes
+- `runlog` sanitisation walked dicts but not lists, so `{"hits": [{"private_key_hex": …}]}`
+  reached `state/runs.jsonl` intact
+- `scripts/watchdog.py` converted run-log timestamps with `mktime` minus
+  `time.timezone`, which is an hour out whenever local DST is in effect
 - `once` / `watch --resource auto` aborted on every large CPU-only host: tier
   `compute` was routed to the GPU queue, and that tier by definition has neither a
   card nor a GPU solver. `adapt` and `doctor` made the same misclassification

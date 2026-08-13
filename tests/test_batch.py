@@ -1,5 +1,6 @@
 from btc_puzzle_lab import batch
 from btc_puzzle_lab.batch import (
+    PuzzleJob,
     build_plan,
     format_status,
     load_plan,
@@ -10,6 +11,7 @@ from btc_puzzle_lab.batch import (
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.cli import main
 from btc_puzzle_lab.paths import clear_path_cache
+from btc_puzzle_lab.search import SearchOutcome
 from btc_puzzle_lab.strategy import HostProfile
 
 
@@ -145,3 +147,83 @@ def test_prize_check_can_be_disabled(monkeypatch):
     monkeypatch.setattr("btc_puzzle_lab.batch.fetch_balance_sats", lambda *a, **k: 0)
     batch._PRIZE_CACHE.clear()
     assert prize_is_gone(_unsolved()) is False
+
+
+def _local_job_plan(monkeypatch, tmp_path, puzzle_ids):
+    """A board of ready, local-engine jobs (no external binary required)."""
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    return build_plan(
+        status="all",
+        puzzle_ids=puzzle_ids,
+        host=HostProfile(cpus=2, mem_mb=2048, engines=frozenset()),
+    )
+
+
+def test_a_job_missing_from_the_catalog_blocks_instead_of_crashing(tmp_path, monkeypatch):
+    """The board outlives the catalog it was built from.
+
+    `import-catalog` then reverting to the practice subset used to make run_batch
+    raise a bare KeyError, which the CLI turned into "error: 999".
+    """
+    plan = _local_job_plan(monkeypatch, tmp_path, [1])
+    ghost = PuzzleJob(
+        puzzle_id=999,
+        bits=40,
+        status_catalog="unsolved",
+        address="1EHNa6Q4Jz2uvNExL497mE43ikXhwF6kZm",
+        has_pubkey=False,
+        has_solution=False,
+        engine="sequential",
+        reason="stale board entry",
+        job_status="ready",
+    )
+    plan.jobs.insert(0, ghost)
+
+    result = run_batch(plan, limit=0)
+
+    assert ghost.job_status == "blocked"
+    assert "not in the active catalog" in ghost.blocker
+    assert result.skipped >= 1
+
+
+def test_prize_check_runs_only_for_jobs_we_actually_reach(tmp_path, monkeypatch):
+    """--limit must not be paid for with an explorer call per unreached job."""
+    plan = _local_job_plan(monkeypatch, tmp_path, [1, 5, 10, 16])
+    for job in plan.jobs:
+        job.job_status = "ready"
+    checked: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.batch.prize_is_gone",
+        lambda puzzle, **kw: checked.append(puzzle.id) or False,
+    )
+    monkeypatch.setattr(
+        "btc_puzzle_lab.batch.run_puzzle",
+        lambda puzzle, **kw: SearchOutcome(hit=None, engine="sequential", message="stub"),
+    )
+
+    run_batch(plan, limit=1, resume=False)
+
+    assert len(plan.jobs) == 4
+    assert checked == [1]
+
+
+def test_a_swept_prize_blocks_the_job_it_belongs_to(tmp_path, monkeypatch):
+    plan = _local_job_plan(monkeypatch, tmp_path, [1])
+    for job in plan.jobs:
+        job.job_status = "ready"
+    monkeypatch.setattr("btc_puzzle_lab.batch.prize_is_gone", lambda puzzle, **kw: True)
+    ran: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.batch.run_puzzle",
+        lambda puzzle, **kw: ran.append(puzzle.id)
+        or SearchOutcome(hit=None, engine="sequential", message="stub"),
+    )
+
+    result = run_batch(plan, limit=1, resume=False)
+
+    assert ran == []
+    assert result.attempted == 0
+    assert result.skipped == 1
+    assert plan.jobs[0].job_status == "blocked"
+    assert "already swept" in plan.jobs[0].blocker

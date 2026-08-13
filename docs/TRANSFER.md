@@ -73,3 +73,8 @@ btc-puzzle-lab transfer --puzzle <id> --fee-rate 20 --verify-dry-run
 - Keep `config/.env`, `state/HITS.jsonl`, and `state/dryrun_*.txhex` off git and backups you do not trust.
 - Flip `DRY_RUN` back to `true` after a live attempt.
 - Practice catalog keys are public; use a real destination only for real hits.
+- `AUTO_TRANSFER_DEST_ADDR` accepts `1…` (P2PKH), `3…` (P2SH), `bc1q…` (P2WPKH /
+  P2WSH) and `bc1p…` (Taproot, bech32m). A v0 address carrying a bech32m checksum
+  — or a v1 carrying a bech32 one — is rejected rather than tolerated, and
+  witness versions above 1 are refused because their spending rules are still
+  undefined.

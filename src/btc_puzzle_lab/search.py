@@ -173,12 +173,23 @@ def _scan_contiguous(
             progress_every=50_000 if (progress or resume_checkpoint) else 0,
         )
 
+    # Workers finish out of order, so the checkpoint may only advance across the
+    # contiguous completed prefix. Recording whichever chunk happened to finish
+    # last let a later --resume start beyond ranges no worker had scanned yet,
+    # silently skipping them.
+    completed: dict[int, int] = {}
+    frontier = lo
+
     def on_chunk(chunk_lo: int, chunk_hi: int, found: int | None) -> None:
+        nonlocal frontier
+        completed[chunk_lo] = chunk_hi
+        while frontier in completed:
+            frontier = completed.pop(frontier) + 1
         save_checkpoint(
             ScanCheckpoint(
                 puzzle_id=puzzle.id,
                 engine=engine,
-                next_secret=chunk_hi + 1,
+                next_secret=frontier,
                 end=hi,
                 updated_at=utc_now(),
             )

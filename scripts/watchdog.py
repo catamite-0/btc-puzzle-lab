@@ -20,6 +20,7 @@ Alerts reuse the lab's own notify channel. Run it detached:
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import re
@@ -249,7 +250,10 @@ def restart_history(puzzle_id: int) -> tuple[int, float | None]:
                 continue
             stamp = event.get("ts", "")
             try:
-                epoch = time.mktime(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+                # timegm reads the struct as UTC, which is what runlog writes.
+                # mktime would read it as local time, and correcting that with
+                # time.timezone is an hour out whenever local DST is in effect.
+                epoch = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
             except ValueError:
                 continue
             if epoch >= cutoff:

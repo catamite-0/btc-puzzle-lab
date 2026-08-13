@@ -303,14 +303,12 @@ def run_batch(
     plan_path: Path | None = None,
     timeout: float | None = None,
 ) -> BatchRunResult:
-    from btc_puzzle_lab.catalog import get_puzzle
-
     catalog_by_id = {p.id: p for p in load_puzzles()}
     hit_ids = {h.puzzle_id for h in read_hits()}
     attempted = hits = done = errors = skipped = 0
     stopped_early = False
 
-    runnable = []
+    runnable: list[tuple[PuzzleJob, Puzzle]] = []
     for job in plan.jobs:
         if job.puzzle_id in hit_ids:
             if job.job_status != "hit":
@@ -320,10 +318,20 @@ def run_batch(
             continue
         if job.job_status in {"hit", "done"} and resume:
             continue
+        puzzle = catalog_by_id.get(job.puzzle_id)
+        if puzzle is None:
+            # The board outlives the catalog it was built from: a full import can be
+            # reverted to the practice subset between `plan` and `batch`, and an
+            # unguarded lookup turned that into a bare KeyError out of run_batch.
+            job.job_status = "blocked"
+            job.blocker = "not in the active catalog (rebuild with: btc-puzzle-lab plan)"
+            job.updated_at = utc_now()
+            skipped += 1
+            continue
         if job.job_status == "blocked" and not include_blocked:
             skipped += 1
             continue
-        if job.job_status == "blocked" and include_blocked:
+        if job.job_status == "blocked":
             # Still blocked at runtime unless binary appeared.
             status, blocker = _classify_job(
                 StrategyPlan(
@@ -338,7 +346,7 @@ def run_batch(
                     window=job.window,
                     max_chunks=job.max_chunks,
                 ),
-                catalog_by_id[job.puzzle_id],
+                puzzle,
             )
             if status == "blocked":
                 job.blocker = blocker
@@ -347,20 +355,7 @@ def run_batch(
                 continue
             job.job_status = "ready"
             job.blocker = None
-        # Last gate before compute: a target whose prize is already gone is not
-        # worth a GPU-hour, whatever the catalog snapshot claims.
-        if prize_is_gone(catalog_by_id[job.puzzle_id]):
-            job.job_status = "blocked"
-            job.blocker = "prize already swept (chain balance is 0)"
-            job.updated_at = utc_now()
-            log_event(
-                "job_prize_gone",
-                puzzle_id=job.puzzle_id,
-                address=catalog_by_id[job.puzzle_id].address,
-            )
-            skipped += 1
-            continue
-        runnable.append(job)
+        runnable.append((job, puzzle))
 
     log_event(
         "batch_start",
@@ -371,11 +366,22 @@ def run_batch(
         stop_on_hit=stop_on_hit,
     )
 
-    for job in runnable:
+    for job, puzzle in runnable:
         if limit is not None and attempted >= limit:
             stopped_early = True
             break
-        puzzle = catalog_by_id.get(job.puzzle_id) or get_puzzle(job.puzzle_id)
+        # Last gate before compute: a target whose prize is already gone is not
+        # worth a GPU-hour, whatever the catalog snapshot claims. Checked here
+        # rather than while building `runnable`, so --limit is not paid for with
+        # an explorer call per job we were never going to reach.
+        if prize_is_gone(puzzle):
+            job.job_status = "blocked"
+            job.blocker = "prize already swept (chain balance is 0)"
+            job.updated_at = utc_now()
+            log_event("job_prize_gone", puzzle_id=job.puzzle_id, address=puzzle.address)
+            skipped += 1
+            save_plan(plan, plan_path)
+            continue
         job.job_status = "running"
         job.updated_at = utc_now()
         save_plan(plan, plan_path)

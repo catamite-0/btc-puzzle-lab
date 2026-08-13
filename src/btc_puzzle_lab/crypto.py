@@ -30,6 +30,9 @@ BTC_ADDR_RE = re.compile(
     r"^(1[a-km-zA-HJ-NP-Z1-9]{25,34}|3[a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[ac-hj-np-z02-9]{11,71})$"
 )
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+# BIP-173 (bech32, witness v0) and BIP-350 (bech32m, witness v1+/Taproot).
+BECH32_CONST = 1
+BECH32M_CONST = 0x2BC830A3
 
 
 def hash160(data: bytes) -> bytes:
@@ -118,13 +121,29 @@ def _bech32_hrp_expand(hrp: str) -> list[int]:
     return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
 
 
-def _bech32_verify(hrp: str, data: list[int]) -> bool:
-    return _bech32_polymod(_bech32_hrp_expand(hrp) + data) == 1
+def bech32_constant_for(witver: int) -> int:
+    """BIP-350: witness v0 keeps bech32, v1+ (Taproot and later) uses bech32m.
+
+    The constant is what separates the two encodings, and checking the wrong one
+    is how a v1 address either gets rejected outright or — worse — accepted with a
+    checksum that never validated.
+    """
+    return BECH32_CONST if witver == 0 else BECH32M_CONST
 
 
-def _bech32_create_checksum(hrp: str, data: list[int]) -> list[int]:
+def _bech32_verify(hrp: str, data: list[int]) -> int | None:
+    """Return the checksum constant that validates this address, or None."""
+    polymod = _bech32_polymod(_bech32_hrp_expand(hrp) + data)
+    if polymod == BECH32_CONST:
+        return BECH32_CONST
+    if polymod == BECH32M_CONST:
+        return BECH32M_CONST
+    return None
+
+
+def _bech32_create_checksum(hrp: str, data: list[int], const: int) -> list[int]:
     values = _bech32_hrp_expand(hrp) + data
-    polymod = _bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ 1
+    polymod = _bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ const
     return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
 
 
@@ -167,25 +186,49 @@ def decode_segwit_address(hrp: str, addr: str) -> tuple[int, bytes]:
         data = [_BECH32_CHARSET.index(c) for c in data_part]
     except ValueError as exc:
         raise ValueError("invalid bech32 character") from exc
-    if not _bech32_verify(hrp, data):
+    witver = data[0]
+    if witver > 16:
+        raise ValueError("invalid segwit version")
+    found = _bech32_verify(hrp, data)
+    if found is None:
         raise ValueError("invalid bech32 checksum")
+    # A v0 address carrying a bech32m checksum (or a v1 address carrying a bech32
+    # one) is not a typo to be tolerated — BIP-350 binds the encoding to the
+    # witness version precisely so the two cannot be confused.
+    if found != bech32_constant_for(witver):
+        expected = "bech32" if witver == 0 else "bech32m"
+        raise ValueError(f"witness v{witver} address must use {expected}")
     decoded = _convertbits(data[1:-6], 5, 8, False)
     if decoded is None:
         raise ValueError("invalid segwit program")
-    witver = data[0]
     witprog = bytes(decoded)
-    if witver > 16 or not (2 <= len(witprog) <= 40):
+    if not (2 <= len(witprog) <= 40):
         raise ValueError("invalid segwit version/program")
     if witver == 0 and len(witprog) not in (20, 32):
         raise ValueError("invalid v0 segwit program length")
+    if witver == 1 and len(witprog) != 32:
+        raise ValueError("invalid v1 (taproot) segwit program length")
+    # Deliberately stricter than BIP-350, which allows any 2..40 byte program on
+    # any version. These addresses are payout destinations: a witness version with
+    # no defined spending rules is non-standard to relay and anyone-can-spend by
+    # consensus, so accepting one risks sending funds nowhere.
+    if witver >= 2:
+        raise ValueError(
+            f"witness v{witver} has no defined address type yet; "
+            "sending there would be non-standard"
+        )
     return witver, witprog
 
 
 def encode_segwit_address(hrp: str, witver: int, witprog: bytes) -> str:
-    if witver > 16 or not (2 <= len(witprog) <= 40):
+    if not (0 <= witver <= 16) or not (2 <= len(witprog) <= 40):
         raise ValueError("invalid segwit version/program")
+    if witver == 0 and len(witprog) not in (20, 32):
+        raise ValueError("invalid v0 segwit program length")
+    if witver == 1 and len(witprog) != 32:
+        raise ValueError("invalid v1 (taproot) segwit program length")
     data = [witver] + (_convertbits(witprog, 8, 5, True) or [])
-    combined = data + _bech32_create_checksum(hrp, data)
+    combined = data + _bech32_create_checksum(hrp, data, bech32_constant_for(witver))
     return hrp + "1" + "".join(_BECH32_CHARSET[d] for d in combined)
 
 
@@ -343,10 +386,17 @@ def sequential_find_p2pkh_parallel(
     workers: int = 2,
     on_chunk_done: Callable[[int, int, int | None], None] | None = None,
 ) -> int | None:
-    """Scan inclusive [start, end] with process workers; first hit wins."""
+    """Scan inclusive [start, end] with process workers; first hit wins.
+
+    The hit is returned as soon as a worker reports it, but the pool still drains
+    before this function returns: there is one worker per chunk, so no future is
+    ever merely queued and cancelling running work is not possible. Chunk width
+    bounds that tail, and callers cap the whole range at MAX_SEQUENTIAL_KEYS.
+    """
     chunks = split_range(start, end, workers)
     if len(chunks) == 1:
         return sequential_find_p2pkh(target_address, start, end)
+    found: int | None = None
     with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
         futures = {
             pool.submit(_sequential_find_chunk, (target_address, lo, hi)): (lo, hi)
@@ -357,8 +407,6 @@ def sequential_find_p2pkh_parallel(
             secret = fut.result()
             if on_chunk_done is not None:
                 on_chunk_done(lo, hi, secret)
-            if secret is not None:
-                for other in futures:
-                    other.cancel()
-                return secret
-    return None
+            if secret is not None and found is None:
+                found = secret
+    return found

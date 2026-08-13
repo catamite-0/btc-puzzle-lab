@@ -236,7 +236,9 @@ Configured via `config/.env` (see `config/.env.example`):
 
 Dry-run artifacts land in ignored `state/dryrun_*.txhex` (`0600`). Signed hex is never printed to stdout. Address↔key mismatch aborts hard.
 
-Supports sweeping compressed/uncompressed Legacy P2PKH and compressed Native Segwit P2WPKH, including multi-UTXO consolidate sweeps.
+Sweeps **from** compressed/uncompressed Legacy P2PKH and compressed Native Segwit P2WPKH, including multi-UTXO consolidate sweeps.
+
+Payout destinations (`AUTO_TRANSFER_DEST_ADDR`) may be Legacy P2PKH (`1…`), P2SH (`3…`), Native Segwit P2WPKH/P2WSH (`bc1q…`) or **Taproot P2TR (`bc1p…`, bech32m)**. Witness versions above 1 are refused on purpose: they have no defined spending rules yet, so funds sent there are non-standard to relay and anyone-can-spend by consensus.
 
 ### External solvers (production toolchain)
 

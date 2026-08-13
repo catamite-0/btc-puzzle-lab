@@ -20,16 +20,22 @@ _SENSITIVE_KEYS = {
 }
 
 
+def _sanitize_value(value: Any) -> Any:
+    # Lists matter as much as dicts: a payload like {"hits": [{"private_key_hex": …}]}
+    # used to pass straight through, because only dicts were walked.
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_value(item)
+            for key, item in value.items()
+            if str(key).lower() not in _SENSITIVE_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
 def _sanitize(fields: dict[str, Any]) -> dict[str, Any]:
-    clean: dict[str, Any] = {}
-    for key, value in fields.items():
-        if key.lower() in _SENSITIVE_KEYS:
-            continue
-        if isinstance(value, dict):
-            clean[key] = _sanitize(value)
-        else:
-            clean[key] = value
-    return clean
+    return _sanitize_value(fields)
 
 
 def log_event(event: str, *, log_path: Path | None = None, **fields: Any) -> Path:

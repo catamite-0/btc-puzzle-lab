@@ -22,6 +22,8 @@ from btc_puzzle_lab.transfer import (
     build_signed_transaction,
     estimate_tx_vbytes,
     legacy_sighash,
+    parse_tx_outputs,
+    script_pubkey_to_address,
     select_utxos_for_sweep,
     sweep_hit,
     tx_vsize,
@@ -338,3 +340,49 @@ def test_max_fee_sats_gate(tmp_path: Path, monkeypatch):
     )
     assert result.status == "skipped"
     assert "MAX_FEE_SATS" in result.message
+
+
+def test_sweep_to_a_taproot_destination(tmp_path: Path, monkeypatch):
+    """A P2TR payout address used to be rejected as invalid before bech32m."""
+    taproot = "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+    monkeypatch.setattr(transfer_mod, "STATE_DIR", tmp_path)
+    pk_hex = "00" * 31 + "02"
+    pk = bytes.fromhex(pk_hex)
+    hit = Hit(
+        puzzle_id=20,
+        address=privkey_to_p2pkh_address(pk),
+        private_key_hex=pk_hex,
+        engine="test",
+        found_at="2026-01-01T00:00:00Z",
+        verified=True,
+    )
+    utxos = [{
+        "txid": "e1e9f1a2384f9de1a86c67341e8c71d604b7b39a3ea3ef5d22ea6c3fcaef0b33",
+        "vout": 1,
+        "value": 1_000_000,
+    }]
+
+    result = sweep_hit(hit, settings=_settings(dest_addr=taproot), utxos=utxos, fee_rate=10)
+    assert result.status == "dry_run"
+    assert result.dest_addr == taproot
+
+    # The signed artifact must actually pay the Taproot script, and the verifier
+    # must agree it matches the configured destination.
+    outs = parse_tx_outputs(Path(result.dry_run_path).read_text(encoding="utf-8").strip())
+    assert len(outs) == 1
+    assert outs[0][1] == address_to_script_pubkey(taproot)
+    assert script_pubkey_to_address(outs[0][1]) == taproot
+
+    verified = verify_dry_run_file(result.dry_run_path, expected_dest=taproot)
+    assert verified.ok is True
+    assert verified.dest_addr == taproot
+
+
+def test_taproot_output_is_larger_than_p2wpkh_in_the_fee_estimate():
+    taproot = "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+    segwit = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+    tr_len = len(address_to_script_pubkey(taproot))
+    wp_len = len(address_to_script_pubkey(segwit))
+    assert tr_len == 34 and wp_len == 22
+    # The estimate has to follow the destination script, or the fee is short.
+    assert estimate_tx_vbytes(1, tr_len, "legacy") - estimate_tx_vbytes(1, wp_len, "legacy") == 12

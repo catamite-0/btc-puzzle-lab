@@ -98,6 +98,27 @@ def read_varint(buf: bytes, offset: int) -> tuple[int, int]:
     return int.from_bytes(buf[offset + 1 : offset + 9], "little"), offset + 9
 
 
+def witness_opcode(witver: int) -> int:
+    """Script opcode for a witness version.
+
+    v0 is OP_0 (0x00); v1..v16 are OP_1..OP_16 (0x51..0x60), *not* the raw version
+    number. Emitting 0x01 for a Taproot output would build a script that does not
+    encode the intended program at all.
+    """
+    if not (0 <= witver <= 16):
+        raise ValueError(f"invalid witness version: {witver}")
+    return 0x00 if witver == 0 else 0x50 + witver
+
+
+def witness_version_from_opcode(opcode: int) -> int | None:
+    """Inverse of :func:`witness_opcode`, or None when this is not a witness push."""
+    if opcode == 0x00:
+        return 0
+    if 0x51 <= opcode <= 0x60:
+        return opcode - 0x50
+    return None
+
+
 def address_to_script_pubkey(addr: str) -> bytes:
     if addr.startswith("1"):
         decoded = base58.b58decode_check(addr)
@@ -111,7 +132,7 @@ def address_to_script_pubkey(addr: str) -> bytes:
         return b"\xa9\x14" + decoded[1:] + b"\x87"
     if addr.lower().startswith("bc1"):
         wit_ver, wit_prog = decode_segwit_address("bc", addr)
-        return bytes([wit_ver, len(wit_prog)]) + wit_prog
+        return bytes([witness_opcode(wit_ver), len(wit_prog)]) + wit_prog
     raise ValueError(f"unsupported BTC address format: {addr}")
 
 
@@ -615,8 +636,15 @@ def script_pubkey_to_address(script: bytes) -> str | None:
     if len(script) == 23 and script.startswith(b"\xa9\x14") and script.endswith(b"\x87"):
         payload = b"\x05" + script[2:22]
         return base58.b58encode_check(payload).decode()
-    if len(script) == 22 and script[0] == 0x00 and script[1] == 0x14:
-        return encode_segwit_address("bc", 0, script[2:])
+    # Witness programs: <version opcode> <push len> <program>. Covers P2WPKH,
+    # P2WSH and P2TR without a per-type branch.
+    if 4 <= len(script) <= 42 and script[1] == len(script) - 2:
+        witver = witness_version_from_opcode(script[0])
+        if witver is not None:
+            try:
+                return encode_segwit_address("bc", witver, script[2:])
+            except ValueError:
+                return None
     return None
 
 

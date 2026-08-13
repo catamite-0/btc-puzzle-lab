@@ -134,7 +134,7 @@ def _webhook_payload(
     text: str,
     webhook_url: str,
     embed: dict[str, Any] | None = None,
-) -> dict[str, Any] | str:
+) -> dict[str, Any]:
     host = (urlparse(webhook_url).hostname or "").lower()
     # Discord incoming webhooks take {"content": ...} or a rich {"embeds": [...]}.
     if "discord.com" in host or "discordapp.com" in host:
@@ -155,15 +155,7 @@ def send_webhook(
 ) -> NotifyResult:
     payload = _webhook_payload(text, url, embed)
     try:
-        if isinstance(payload, str):
-            resp = requests.post(
-                url,
-                data=payload.encode("utf-8"),
-                headers={"Content-Type": "text/plain; charset=utf-8"},
-                timeout=timeout,
-            )
-        else:
-            resp = requests.post(url, json=payload, timeout=timeout)
+        resp = requests.post(url, json=payload, timeout=timeout)
         if 200 <= resp.status_code < 300:
             return NotifyResult("webhook", True, f"http {resp.status_code}")
         return NotifyResult(

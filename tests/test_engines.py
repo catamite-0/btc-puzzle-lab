@@ -205,3 +205,29 @@ def test_carriage_return_progress_is_captured(tmp_path, monkeypatch):
     )
     assert "Speed: 17600 MKeys/s" in output
     assert "Speed: 8000 MKeys/s" in output
+
+
+def test_a_noisy_labelled_line_cannot_mask_the_real_key():
+    """The label regex has to be loose; the address check is what makes it safe.
+
+    "add" is valid hex, so a line reading "priv add 5" parsed as a key and won,
+    turning a genuinely solved puzzle into an address-mismatch crash further down.
+    """
+    from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+
+    pk_hex = "00" * 31 + "02"
+    address = privkey_to_p2pkh_address(privkey_bytes(pk_hex))
+    text = f"priv add 5\nsome noise\nPrivate key: {pk_hex}\n"
+
+    assert parse_privkey_text(text, expected_address=address) == 2
+    # Without a target address there is nothing to check against, so the first
+    # parse still wins — which is exactly why callers pass one.
+    assert parse_privkey_text(text) == 0xADD
+
+
+def test_a_key_for_a_different_address_is_not_reported_as_a_hit():
+    from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+
+    other = privkey_to_p2pkh_address(privkey_bytes("00" * 31 + "07"))
+    text = "Private key: " + "00" * 31 + "02\n"
+    assert parse_privkey_text(text, expected_address=other) is None

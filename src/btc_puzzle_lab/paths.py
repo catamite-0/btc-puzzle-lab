@@ -78,19 +78,12 @@ def read_puzzles_json() -> str:
 
 
 def puzzles_file() -> Path:
-    """Workspace catalog override when present; else a non-authoritative label path."""
-    override = workspace_root() / "data" / "puzzles.json"
-    if override.is_file():
-        return override
-    # Packaged catalog is read via read_puzzles_json(); this path is informational.
+    """Workspace catalog override path.
+
+    The file need not exist: when it is absent the packaged catalog is read
+    through read_puzzles_json() and this path is only a label.
+    """
     return workspace_root() / "data" / "puzzles.json"
-
-
-def _env_example() -> Path:
-    workspace_example = workspace_root() / "config" / ".env.example"
-    if workspace_example.is_file():
-        return workspace_example
-    return workspace_root() / "config" / ".env.example"
 
 
 REPO_ROOT = _LazyPath(workspace_root)
@@ -101,7 +94,7 @@ HITS_FILE = _LazyPath(lambda: workspace_root() / "state" / "HITS.jsonl")
 RUNS_FILE = _LazyPath(lambda: workspace_root() / "state" / "runs.jsonl")
 CONFIG_DIR = _LazyPath(lambda: workspace_root() / "config")
 ENV_FILE = _LazyPath(lambda: workspace_root() / "config" / ".env")
-ENV_EXAMPLE_FILE = _LazyPath(_env_example)
+ENV_EXAMPLE_FILE = _LazyPath(lambda: workspace_root() / "config" / ".env.example")
 
 
 def scan_checkpoint_path(puzzle_id: int) -> Path:

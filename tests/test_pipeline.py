@@ -113,3 +113,53 @@ def test_summary_includes_events(tmp_path: Path, monkeypatch):
     assert summary.hit_rows == 1
     assert summary.coverage_files == 0
     assert "coverage files" in text
+
+
+def test_parallel_checkpoint_only_advances_across_the_completed_prefix(tmp_path, monkeypatch):
+    """Workers finish out of order; the checkpoint may not jump past a gap.
+
+    Recording whichever chunk finished last let a later --resume start beyond
+    ranges no worker had scanned, silently skipping them.
+    """
+    from btc_puzzle_lab.catalog import Puzzle
+    from btc_puzzle_lab.paths import clear_path_cache
+    from btc_puzzle_lab.search import _scan_contiguous
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    puzzle = Puzzle(
+        id=777,
+        bits=8,
+        address="1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
+        range_start=0x00,
+        range_end=0x3F,
+        pubkey_compressed_hex="",
+        practice_solution=None,
+        status="unsolved",
+        engine_default="sequential",
+        notes="",
+    )
+    seen: list[int | None] = []
+
+    def fake_parallel(address, lo, hi, *, workers, on_chunk_done):
+        # Four chunks of 16 keys, reported in a scrambled completion order.
+        for chunk_lo, chunk_hi in ((0x30, 0x3F), (0x10, 0x1F), (0x00, 0x0F), (0x20, 0x2F)):
+            on_chunk_done(chunk_lo, chunk_hi, None)
+            ckpt = load_checkpoint(puzzle.id)
+            seen.append(None if ckpt is None else ckpt.next_secret)
+        return None
+
+    monkeypatch.setattr(search_mod, "sequential_find_p2pkh_parallel", fake_parallel)
+    _scan_contiguous(
+        puzzle,
+        lo=0x00,
+        hi=0x3F,
+        engine="sequential",
+        workers=4,
+        progress=False,
+        resume_checkpoint=False,
+    )
+
+    # Stays at the start until the first chunk lands, then advances only as far
+    # as the contiguous run reaches.
+    assert seen == [0x00, 0x00, 0x20, 0x40]

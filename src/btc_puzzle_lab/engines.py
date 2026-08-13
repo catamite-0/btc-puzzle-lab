@@ -24,7 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from btc_puzzle_lab.catalog import Puzzle
-from btc_puzzle_lab.crypto import normalize_privkey_hex
+from btc_puzzle_lab.crypto import match_privkey_address, normalize_privkey_hex, privkey_bytes
 from btc_puzzle_lab.paths import workspace_root
 
 _HEX_KEY = re.compile(r"\b(0x)?([0-9a-fA-F]{1,64})\b")
@@ -126,12 +126,29 @@ def available_engines() -> list[str]:
     return [name for name in ENGINES if resolve_binary(name) is not None]
 
 
+def _derives_address(secret: int, address: str) -> bool:
+    """Does this candidate actually control the address we are searching for?"""
+    try:
+        match_privkey_address(privkey_bytes(f"{secret:064x}"), address)
+    except ValueError:
+        return False
+    return True
+
+
 def parse_privkey_text(text: str, *, expected_address: str | None = None) -> int | None:
     """Extract a private key int from solver stdout/stderr/result files.
 
-    ``expected_address`` unlocks BitCrack's unlabelled result rows. They carry the
-    address they belong to, so requiring a match keeps a stale or multi-target
-    result file from being read as a hit for the puzzle we are actually running.
+    ``expected_address`` is what makes the answer trustworthy, in two ways.
+
+    It unlocks BitCrack's unlabelled result rows, which carry the address they
+    belong to, so a stale or multi-target result file cannot be read as a hit for
+    the puzzle actually running.
+
+    And it is checked against the labelled lines too. That regex has to be loose,
+    because solvers disagree on their wording — loose enough that a line reading
+    ``priv add 5`` parses as a key, since ``add`` is valid hex. Returning the
+    first parse would let one noisy line mask a real hit further down and turn a
+    solved puzzle into an address-mismatch crash.
     """
     for line in text.splitlines():
         lower = line.lower()
@@ -140,9 +157,11 @@ def parse_privkey_text(text: str, *, expected_address: str | None = None) -> int
         for match in _HEX_KEY.finditer(line.replace(":", " ")):
             token = match.group(2)
             try:
-                return int(normalize_privkey_hex(token), 16)
+                secret = int(normalize_privkey_hex(token), 16)
             except ValueError:
                 continue
+            if expected_address is None or _derives_address(secret, expected_address):
+                return secret
     if expected_address is None:
         return None
     for line in text.splitlines():

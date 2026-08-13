@@ -80,8 +80,9 @@ box do not overwrite each other's plan.
 
 ## Money safety
 
-`--dest` turns auto-transfer **on in dry-run**: a hit is verified, signed, and
-written to `state/dryrun_*.txhex` — and *not* broadcast.
+`--dest` accepts Legacy (`1…`), P2SH (`3…`), Native Segwit (`bc1q…`) and Taproot
+(`bc1p…`) payout addresses. It turns auto-transfer **on in dry-run**: a hit is
+verified, signed, and written to `state/dryrun_*.txhex` — and *not* broadcast.
 
 Broadcasting real BTC is a separate, explicit decision:
 
