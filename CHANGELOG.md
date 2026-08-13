@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-13
+
+Out-of-the-box single-target automation, plus Taproot payout addresses.
+
+### Breaking
+- `once` / `watch --no-audit` now still performs the sweep. The two are separate
+  switches and the sweep was nested inside the audit branch, so skipping
+  verification silently skipped the transfer as well. Use `--no-transfer` to
+  search without sweeping
+- Payout addresses on witness versions above 1 are rejected. They previously
+  passed address validation and then built a malformed output script, so nothing
+  that worked before stops working — the failure just happens up front now
+
 ### Added
 - `btc-puzzle-lab auto <id>`: one command from a payout address, an alert URL and a
   puzzle id to a running search — host probe → engine choice → build dependencies →
