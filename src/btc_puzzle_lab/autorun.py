@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from btc_puzzle_lab.batch import prize_is_gone
@@ -28,7 +28,13 @@ from btc_puzzle_lab.paths import STATE_DIR
 from btc_puzzle_lab.recommend import EngineChoice, recommend_engine
 from btc_puzzle_lab.runlog import log_event
 from btc_puzzle_lab.settings import ConfigUpdate, bootstrap_config
-from btc_puzzle_lab.strategy import HostProfile, probe_host
+from btc_puzzle_lab.strategy import (
+    GPU_ENGINES,
+    KANGAROO_ENGINES,
+    SAFE_DP,
+    HostProfile,
+    probe_host,
+)
 from btc_puzzle_lab.toolchain import EnsureResult, ensure_engine
 
 STAGES = ("config", "catalog", "host", "engine", "target", "toolchain", "run")
@@ -187,15 +193,19 @@ def run_auto(
             return fail(f"unknown engine: {engine}")
         choice = EngineChoice(
             engine=engine,
-            resource="gpu" if engine in {"bitcrack", "rckangaroo"} else "cpu",
+            resource="gpu" if engine in GPU_ENGINES else "cpu",
             reason="pinned by --engine",
             needs_install=engine in ENGINES,
-            dp=dp,
+            dp=(
+                dp
+                if dp is not None
+                else (SAFE_DP if engine in KANGAROO_ENGINES else None)
+            ),
         )
     else:
         choice = recommend_engine(puzzle, profile, allow_cpu_fallback=allow_cpu_fallback)
         if dp is not None:
-            choice = EngineChoice(**{**choice.__dict__, "dp": dp})
+            choice = replace(choice, dp=dp)
     result.choice = choice
     stage = record("engine", choice.ok, choice.format())
     if not stage.ok:
@@ -253,12 +263,16 @@ def run_auto(
     if threads is not None:
         pins["BTC_PUZZLE_LAB_THREADS"] = str(threads)
     plan_path = plan_file_for(puzzle_id)
+    # Hunt boxes post sealed hits to the hub; the hub sweeps. Local dest+relay
+    # would sign twice if both sides are live.
+    hunt_relay = bool(os.getenv("RELAY_URL", "").strip())
     record(
         "run",
         True,
         f"watch --ids {puzzle_id} --resource {choice.resource} "
         + " ".join(f"{k.rsplit('_', 1)[-1].lower()}={v}" for k, v in sorted(pins.items()))
-        + f" plan={plan_path}",
+        + f" plan={plan_path}"
+        + (" transfer=hub" if hunt_relay else ""),
     )
     log_event(
         "auto_start",
@@ -285,7 +299,7 @@ def run_auto(
             # would otherwise block a pure-Python run on a host with no compiler.
             require_doctor=False,
             audit=True,
-            transfer=True,
+            transfer=not hunt_relay,
             notify=True,
             progress=progress,
             max_hours=max_hours,

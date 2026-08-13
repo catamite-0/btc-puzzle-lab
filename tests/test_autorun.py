@@ -169,6 +169,7 @@ def test_run_pins_engine_and_dp_then_restores_the_environment(monkeypatch):
     assert call["status"] == "all"
     assert call["bits_min"] is None
     assert call["puzzle_ids"] == [140]
+    assert call["transfer"] is True
     # …and the pins must not leak into the rest of the process.
     assert "BTC_PUZZLE_LAB_ENGINE" not in os.environ
     assert "BTC_PUZZLE_LAB_DP" not in os.environ
@@ -193,6 +194,47 @@ def test_explicit_engine_override_wins(monkeypatch):
     assert result.choice.engine == "kangaroo"
     assert result.choice.resource == "cpu"
     assert "pinned by --engine" in result.choice.reason
+
+
+def test_relay_hunt_does_not_sweep_locally(monkeypatch):
+    from btc_puzzle_lab.relay import generate_relay_keypair
+
+    monkeypatch.setattr("btc_puzzle_lab.autorun.prize_is_gone", lambda p, **k: False)
+    _stub_toolchain(monkeypatch)
+    runs: list[dict] = []
+    _stub_watch(monkeypatch, runs)
+    _, pub = generate_relay_keypair()
+
+    result = run_auto(
+        71,
+        host=_host(),
+        max_passes=1,
+        relay_url="https://control.example:8787/hit",
+        relay_seal_pubkey=pub,
+        relay_token="control-hub-token-1",
+    )
+
+    assert result.ok
+    assert runs[0]["transfer"] is False
+    assert "transfer=hub" in _stage(result, "run").detail
+
+
+def test_auto_refuses_dest_plus_relay(monkeypatch):
+    from btc_puzzle_lab.relay import generate_relay_keypair
+
+    _, pub = generate_relay_keypair()
+    result = run_auto(
+        71,
+        host=_host(),
+        plan_only=True,
+        dest_addr="1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+        relay_url="https://control.example:8787/hit",
+        relay_seal_pubkey=pub,
+        relay_token="control-hub-token-1",
+    )
+    assert not result.ok
+    assert result.failed_stage == "config"
+    assert "cannot both be set" in result.message
 
 
 def test_formatted_report_numbers_every_stage(monkeypatch):

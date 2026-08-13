@@ -209,12 +209,10 @@ def notify_hit(
     )
     send_relay = bool(cfg.relay_url) and not skip_relay
     if not send_chat and not send_relay:
-        if skip_relay:
-            if not cfg.enabled:
-                return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
-            return [NotifyResult("none", True, "hub ingest: chat unset, relay skipped")]
         if not cfg.enabled:
             return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
+        if skip_relay:
+            return [NotifyResult("none", True, "hub ingest: chat unset, relay skipped")]
         return [
             NotifyResult(
                 "none",

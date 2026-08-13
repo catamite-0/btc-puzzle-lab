@@ -11,6 +11,7 @@ from btc_puzzle_lab.paths import ENV_FILE, REPO_ROOT
 
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
+MIN_RELAY_TOKEN_LEN = 16
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -147,8 +148,11 @@ def validate_notify_settings(settings: NotifySettings) -> list[str]:
 
             if not is_seal_pubkey(settings.relay_seal_pubkey):
                 errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
-        if settings.relay_token and len(settings.relay_token) < 16:
-            errors.append("RELAY_TOKEN must be at least 16 characters")
+        if len(settings.relay_token) < MIN_RELAY_TOKEN_LEN:
+            errors.append(
+                "RELAY_URL is set but RELAY_TOKEN is missing or too short "
+                f"(need {MIN_RELAY_TOKEN_LEN}+ chars)"
+            )
     elif settings.relay_seal_pubkey:
         errors.append("RELAY_SEAL_PUBKEY set but RELAY_URL is empty")
     if not settings.enabled:
@@ -323,18 +327,36 @@ def bootstrap_config(
         values["RELAY_SEAL_PUBKEY"] = relay_seal_pubkey
     if relay_token is not None:
         relay_token = relay_token.strip()
-        if len(relay_token) < 16:
-            raise ValueError("RELAY_TOKEN must be at least 16 characters")
+        if len(relay_token) < MIN_RELAY_TOKEN_LEN:
+            raise ValueError(
+                f"RELAY_TOKEN must be at least {MIN_RELAY_TOKEN_LEN} characters"
+            )
         values["RELAY_TOKEN"] = relay_token
 
     effective_relay = values.get("RELAY_URL") or os.getenv("RELAY_URL", "").strip()
     effective_pub = values.get("RELAY_SEAL_PUBKEY") or os.getenv("RELAY_SEAL_PUBKEY", "").strip()
+    effective_token = values.get("RELAY_TOKEN") or os.getenv("RELAY_TOKEN", "").strip()
+    effective_dest = (
+        values.get("AUTO_TRANSFER_DEST_ADDR")
+        or os.getenv("AUTO_TRANSFER_DEST_ADDR", "").strip()
+    )
     if effective_relay and not effective_pub:
         raise ValueError(
             "--relay needs --relay-seal-pubkey from `relay-keygen` on the control VPS"
         )
     if effective_pub and not effective_relay:
         raise ValueError("relay seal pubkey set but --relay URL is empty")
+    if effective_relay and len(effective_token) < MIN_RELAY_TOKEN_LEN:
+        raise ValueError(
+            "--relay needs --relay-token "
+            f"({MIN_RELAY_TOKEN_LEN}+ chars); on the control VPS: "
+            "btc-puzzle-lab config --new-relay-token"
+        )
+    if effective_dest and effective_relay:
+        raise ValueError(
+            "dest and --relay cannot both be set: dest belongs on the control "
+            "VPS (hub), RELAY_URL on hunt boxes. Dual dest+relay can sweep twice"
+        )
 
     if not values:
         return ConfigUpdate(

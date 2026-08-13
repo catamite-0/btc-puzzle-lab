@@ -50,6 +50,7 @@ def test_pubkey_on_gpu_picks_rckangaroo_with_a_survivable_dp():
 def test_pubkey_without_gpu_picks_cpu_kangaroo():
     choice = recommend_engine(_puzzle(140, pubkey="02" + "ab" * 32), _host(), cuda=False)
     assert (choice.engine, choice.resource) == ("kangaroo", "cpu")
+    assert choice.dp == SAFE_DP
 
 
 def test_address_only_targets_split_by_gpu():

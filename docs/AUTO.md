@@ -138,10 +138,15 @@ btc-puzzle-lab auto 140 \
     --relay-token <same-token>
 ```
 
-`hub` requires `RELAY_TOKEN` (16+ chars) and `config/relay-secret`. Put TLS in
-front and firewall the port. Notify from the hub uses `skip_relay` so it does
-not POST back to itself. Live broadcast still needs `--live` / the confirm
-phrase **on the control VPS**.
+`hub` requires `RELAY_TOKEN` (16+ chars) and `config/relay-secret`. `--relay`
+on a hunt box also requires that token up front (otherwise the hub returns 401
+and the outbox retries forever). Dest and `--relay` cannot be set together:
+that would let hunt and hub both sweep. Hunt `auto --relay` skips the local
+sweep even if a dest leaked into `.env`.
+
+Put TLS in front and firewall the port. Notify from the hub uses `skip_relay`
+so it does not POST back to itself. Live broadcast still needs `--live` / the
+confirm phrase **on the control VPS**.
 
 ## Build dependencies
 

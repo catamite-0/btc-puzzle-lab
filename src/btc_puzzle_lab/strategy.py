@@ -14,17 +14,24 @@ from pathlib import Path
 from typing import Any, Literal
 
 from btc_puzzle_lab.catalog import Puzzle
-from btc_puzzle_lab.engines import available_engines, resolve_binary
+from btc_puzzle_lab.engines import available_engines
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, MAX_SEQUENTIAL_KEYS
 
 SEQUENTIAL_BITS = 20
 LOW_MEM_MB = 2048
 STANDARD_MEM_MB = 8192
 
+# Distinguished-point bits for kangaroo-class engines. Upstream defaults to 16,
+# which grows the DP table ~35 GB/h and OOM-kills a 116 GB container in ~3.4 h,
+# discarding every accumulated point. Across dp 23..32 the extra work is under
+# 0.003% (ARCHITECTURE.md §8), so the largest survivable value is the default.
+SAFE_DP = 30
+
 HostTier = Literal["constrained", "standard", "gpu", "compute"]
 ResourceClass = Literal["cpu", "gpu"]
 
 GPU_ENGINES = frozenset({"bitcrack", "rckangaroo"})
+KANGAROO_ENGINES = frozenset({"kangaroo", "rckangaroo"})
 
 
 @dataclass(frozen=True)
@@ -57,7 +64,7 @@ class StrategyPlan:
     reason: str
     workers: int = 1
     threads: int = 2
-    dp: int = 16
+    dp: int = SAFE_DP
     coverage: bool = False
     chunk_size: int = DEFAULT_CHUNK_SIZE
     order: str = "sequential"
@@ -87,7 +94,7 @@ class StrategyPlan:
             bits.append(f"window={self.window}")
         if self.engine == "keyhunt":
             bits.append(f"threads={self.threads}")
-        if self.engine in {"kangaroo", "rckangaroo"}:
+        if self.engine in KANGAROO_ENGINES:
             bits += [f"threads={self.threads}", f"dp={self.dp}"]
         return f"{' '.join(bits)} — {self.reason}"
 
@@ -247,7 +254,6 @@ def _resource_knobs(profile: HostProfile) -> dict[str, int | None]:
             "chunk": 16_384,
             "window": 250_000,
             "max_chunks": 2,
-            "dp": 14,
         }
     if profile.tier == "standard":
         return {
@@ -256,7 +262,6 @@ def _resource_knobs(profile: HostProfile) -> dict[str, int | None]:
             "chunk": DEFAULT_CHUNK_SIZE,
             "window": 1_000_000,
             "max_chunks": 4,
-            "dp": 16,
         }
     if profile.tier == "gpu":
         return {
@@ -265,7 +270,6 @@ def _resource_knobs(profile: HostProfile) -> dict[str, int | None]:
             "chunk": DEFAULT_CHUNK_SIZE,
             "window": 2_000_000,
             "max_chunks": 8,
-            "dp": 16,
         }
     # compute
     return {
@@ -274,7 +278,6 @@ def _resource_knobs(profile: HostProfile) -> dict[str, int | None]:
         "chunk": DEFAULT_CHUNK_SIZE * 2,
         "window": 4_000_000,
         "max_chunks": 16,
-        "dp": 18,
     }
 
 
@@ -308,10 +311,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     chunk = int(knobs["chunk"] or DEFAULT_CHUNK_SIZE)
     window = int(knobs["window"] or 1_000_000)
     max_chunks = knobs["max_chunks"]
-    dp = int(knobs["dp"] or 16)
-    # Kangaroo DP bits decide how fast the distinguished-point table eats RAM.
-    # The default suits small ranges; on a wide range it can fill a container's
-    # memory in hours and get the solver OOM-killed, losing all accumulated work.
+    dp = SAFE_DP
     env_dp = _env_int("BTC_PUZZLE_LAB_DP")
     if env_dp and env_dp > 0:
         dp = env_dp
@@ -349,6 +349,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             return StrategyPlan(
                 engine="kangaroo",
                 threads=threads,
+                dp=dp,
                 tier=profile.tier,
                 reason=(
                     f"tier={profile.tier}: Kangaroo available for "
@@ -488,7 +489,7 @@ def format_host_profile(profile: HostProfile | None = None) -> str:
             "adaptive knobs:",
             f"  workers={knobs['workers']} threads={knobs['threads']} "
             f"chunk={knobs['chunk']} window={knobs['window']} "
-            f"max_chunks={knobs['max_chunks']} dp={knobs['dp']}",
+            f"max_chunks={knobs['max_chunks']} kangaroo_dp={SAFE_DP}",
         ]
     )
     return "\n".join(lines)
@@ -523,14 +524,5 @@ def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
     else:
         tips.append("run: btc-puzzle-lab auto 71   (or: once --resource cpu)")
     return tips
-
-
-def describe_binaries() -> str:
-    """Compatibility helper for tests/docs."""
-    rows = []
-    for name in ("keyhunt", "bitcrack", "kangaroo", "rckangaroo"):
-        path = resolve_binary(name)
-        rows.append(f"{name}={'yes' if path else 'no'}")
-    return " ".join(rows)
 
 

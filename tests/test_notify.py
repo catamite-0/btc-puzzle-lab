@@ -77,6 +77,20 @@ def test_validate_notify_requires_channel_when_enabled():
     ) == []
 
 
+def test_validate_notify_requires_token_when_relay_url_is_set():
+    errors = validate_notify_settings(
+        NotifySettings(
+            enabled=False,
+            webhook_url="",
+            telegram_bot_token="",
+            telegram_chat_id="",
+            relay_url="https://control.example:8787/hit",
+            relay_seal_pubkey="ab" * 32,
+        )
+    )
+    assert any("RELAY_TOKEN" in err for err in errors)
+
+
 def test_notify_hit_posts_webhook(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()

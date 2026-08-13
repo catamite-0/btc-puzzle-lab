@@ -1,5 +1,6 @@
 from btc_puzzle_lab.catalog import Puzzle, get_puzzle
 from btc_puzzle_lab.strategy import (
+    SAFE_DP,
     HostProfile,
     _mem_mb,
     cgroup_limit_mb,
@@ -55,7 +56,7 @@ def test_pubkey_prefers_rckangaroo_over_bitcrack():
         host=_host(engines={"bitcrack", "keyhunt", "kangaroo", "rckangaroo"}, cpus=4),
     )
     assert plan.engine == "rckangaroo"
-    assert plan.dp == 16
+    assert plan.dp == SAFE_DP
 
 
 def test_pubkey_falls_back_to_kangaroo():
@@ -124,17 +125,16 @@ def test_unsolved_pubkey_without_engines_names_kangaroo_algorithm():
     assert "RCKANGAROO_PATH" in plan.reason
 
 
-def test_dp_override_prevents_oom_on_wide_ranges(monkeypatch):
-    # Default dp fills a container's RAM with distinguished points in hours on a
+def test_kangaroo_dp_defaults_to_safe_value(monkeypatch):
+    # dp=16 fills a container's RAM with distinguished points in hours on a
     # wide range; the solver is OOM-killed and all accumulated work is lost.
     host = _host(cpus=8, mem_mb=65536, engines={"rckangaroo"})
     puzzle = get_puzzle(40)
     assert plan_strategy(puzzle, host=host).engine == "rckangaroo"
+    assert plan_strategy(puzzle, host=host).dp == SAFE_DP
 
-    monkeypatch.setenv("BTC_PUZZLE_LAB_DP", "30")
-    assert plan_strategy(puzzle, host=host).dp == 30
-    monkeypatch.delenv("BTC_PUZZLE_LAB_DP")
-    assert plan_strategy(puzzle, host=host).dp != 30
+    monkeypatch.setenv("BTC_PUZZLE_LAB_DP", "24")
+    assert plan_strategy(puzzle, host=host).dp == 24
 
 
 def test_mem_probe_respects_cgroup_limit(tmp_path, monkeypatch):

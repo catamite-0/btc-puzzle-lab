@@ -18,28 +18,20 @@ quiet relocation to another resource class.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from btc_puzzle_lab.catalog import Puzzle
-from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, MAX_SEQUENTIAL_KEYS
-from btc_puzzle_lab.strategy import SEQUENTIAL_BITS, HostProfile
+from btc_puzzle_lab.search import MAX_SEQUENTIAL_KEYS
+from btc_puzzle_lab.strategy import (
+    SAFE_DP,
+    SEQUENTIAL_BITS,
+    HostProfile,
+    ResourceClass,
+)
 from btc_puzzle_lab.toolchain import cuda_available
-
-ResourceClass = Literal["cpu", "gpu"]
 
 # Kangaroo-class solvers need a range wide enough to be worth their setup; both
 # upstreams also refuse to run below this.
 PUBKEY_MIN_BITS = 32
-
-# Distinguished-point bits for kangaroo-class engines when no calibration table
-# exists. The engine default of 16 grows the DP table ~35 GB/h, which OOM-kills a
-# 116 GB container in about 3.4 hours and discards every accumulated point with it.
-# Across dp 23..32 the extra algorithmic work is under 0.003% (ARCHITECTURE.md §8),
-# so the largest survivable value is the conservative pick, not a tuning risk.
-SAFE_DP = 30
-
-# Engines that ship inside this package and need no clone/build step.
-BUILT_IN = frozenset({"sequential", "window", "inject-known"})
 
 # GPU engine -> the CPU engine solving the same problem, for an explicit downgrade.
 _CPU_ALTERNATIVE = {
@@ -145,6 +137,7 @@ def recommend_engine(
                         "toolkit, downgraded to the CPU kangaroo by --allow-cpu-fallback"
                     ),
                     needs_install=True,
+                    dp=SAFE_DP,
                 )
             return EngineChoice(
                 engine="rckangaroo",
@@ -164,6 +157,7 @@ def recommend_engine(
                 "the CPU (no GPU on this host)"
             ),
             needs_install=True,
+            dp=SAFE_DP,
         )
 
     # 3. Address-only target: brute force the range.
@@ -190,17 +184,3 @@ def recommend_engine(
         ),
         needs_install=True,
     )
-
-
-def run_kwargs_for(choice: EngineChoice, host: HostProfile) -> dict[str, int | bool | str | None]:
-    """Search knobs implied by a choice, for callers driving ``run_puzzle`` directly."""
-    threads = min(max(1, host.cpus), 8)
-    kwargs: dict[str, int | bool | str | None] = {
-        "engine": choice.engine,
-        "threads": threads,
-        "workers": 1,
-        "chunk_size": DEFAULT_CHUNK_SIZE,
-    }
-    if choice.dp is not None:
-        kwargs["dp"] = choice.dp
-    return kwargs

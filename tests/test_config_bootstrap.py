@@ -95,3 +95,40 @@ def test_rewriting_a_key_does_not_duplicate_it():
     dest_lines = [line for line in lines if line.startswith("AUTO_TRANSFER_DEST_ADDR=")]
     assert len(dest_lines) == 1
     assert dest_lines[0].endswith("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+
+
+def test_relay_requires_a_token():
+    from btc_puzzle_lab.relay import generate_relay_keypair
+
+    _, pub = generate_relay_keypair()
+    with pytest.raises(ValueError, match="relay-token"):
+        bootstrap_config(
+            relay_url="https://control.example:8787/hit",
+            relay_seal_pubkey=pub,
+        )
+
+
+def test_dest_and_relay_cannot_both_be_set():
+    from btc_puzzle_lab.relay import generate_relay_keypair
+
+    _, pub = generate_relay_keypair()
+    with pytest.raises(ValueError, match="cannot both be set"):
+        bootstrap_config(
+            dest_addr=DEST,
+            relay_url="https://control.example:8787/hit",
+            relay_seal_pubkey=pub,
+            relay_token="control-hub-token-1",
+        )
+
+
+def test_relay_is_refused_when_dest_already_in_env():
+    from btc_puzzle_lab.relay import generate_relay_keypair
+
+    bootstrap_config(dest_addr=DEST)
+    _, pub = generate_relay_keypair()
+    with pytest.raises(ValueError, match="cannot both be set"):
+        bootstrap_config(
+            relay_url="https://control.example:8787/hit",
+            relay_seal_pubkey=pub,
+            relay_token="control-hub-token-1",
+        )
