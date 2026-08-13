@@ -35,7 +35,7 @@
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
 - Ship: merge to `main`, bump versions (`pyproject.toml` + `__version__` + CHANGELOG),
-  then tag `v0.6.0` (or next) to trigger `.github/workflows/release.yml`.
+  then tag `v0.7.0` (or next) to trigger `.github/workflows/release.yml`.
 - Cloud Agent bootstrap: `.cursor/environment.json` + `scripts/cloud-install.sh`
   (idempotent venv/deps). Do not bake `config/.env`, `state/`, `vendor/`, or `bin/`
   into builds.
