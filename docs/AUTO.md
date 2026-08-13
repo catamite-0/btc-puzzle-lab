@@ -144,9 +144,10 @@ and the outbox retries forever). Dest and `--relay` cannot be set together:
 that would let hunt and hub both sweep. Hunt `auto --relay` skips the local
 sweep even if a dest leaked into `.env`.
 
-Put TLS in front and firewall the port. Notify from the hub uses `skip_relay`
-so it does not POST back to itself. Live broadcast still needs `--live` / the
-confirm phrase **on the control VPS**.
+Put TLS in front and firewall the port. Hub notify is chat-only (Discord /
+Telegram); it does not POST back to itself. Hunt `auto --relay` posts sealed
+hits from the search loop, independent of `--no-notify`. Live broadcast still
+needs `--live` / the confirm phrase **on the control VPS**.
 
 ## Build dependencies
 

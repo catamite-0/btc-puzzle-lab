@@ -18,6 +18,11 @@ All notable changes to this project are documented here.
   local sweep even if dest leaked into `.env`.
 - `--relay` now requires `--relay-token` up front instead of 401-retrying the
   outbox after a hit.
+- Chat notify and sealed relay are separate: `notify_hit` is Discord/Telegram
+  only; hunt posts `RELAY_URL` from the search loop even with `--no-notify`.
+  Hub ingest no longer needs `skip_relay`.
+- `run` / `run_puzzle` default kangaroo `dp` is 30 (was 16).
+- `doctor` gpu_solver accepts RCKangaroo, not only BitCrack.
 
 ## [0.6.0] — 2026-08-13
 

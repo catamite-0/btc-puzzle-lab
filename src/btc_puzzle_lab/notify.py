@@ -201,23 +201,19 @@ def notify_hit(
     audit: AuditResult | None = None,
     transfer: TransferResult | None = None,
     settings: NotifySettings | None = None,
-    skip_relay: bool = False,
 ) -> list[NotifyResult]:
     cfg = settings or get_notify_settings()
     send_chat = cfg.enabled and bool(
         cfg.webhook_url or (cfg.telegram_bot_token and cfg.telegram_chat_id)
     )
-    send_relay = bool(cfg.relay_url) and not skip_relay
-    if not send_chat and not send_relay:
+    if not send_chat:
         if not cfg.enabled:
             return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
-        if skip_relay:
-            return [NotifyResult("none", True, "hub ingest: chat unset, relay skipped")]
         return [
             NotifyResult(
                 "none",
                 False,
-                "notify enabled but no webhook/telegram/relay configured",
+                "notify enabled but no webhook/telegram configured",
             )
         ]
 
@@ -244,15 +240,6 @@ def notify_hit(
                 chat_id=cfg.telegram_chat_id,
             )
         )
-    if send_relay:
-        from btc_puzzle_lab.relay import deliver_relay
-
-        relay = deliver_relay(
-            hit,
-            url=cfg.relay_url,
-            seal_pubkey=cfg.relay_seal_pubkey,
-        )
-        results.append(NotifyResult("relay", relay.ok, relay.message))
     log_event(
         "notify_hit",
         puzzle_id=hit.puzzle_id,

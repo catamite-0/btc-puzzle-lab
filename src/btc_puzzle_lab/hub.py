@@ -213,7 +213,7 @@ def ingest_sealed_hit(
 
     if notify:
         sender = notify_fn or notify_hit
-        sender(hit, audit=audit, transfer=transfer, skip_relay=True)
+        sender(hit, audit=audit, transfer=transfer)
 
     log_event(
         "hub_ingest",

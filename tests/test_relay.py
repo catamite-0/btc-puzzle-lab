@@ -60,28 +60,17 @@ def test_unseal_cli_hides_key_without_show_key(capsys):
     assert "a" * 64 in shown
 
 
-def test_notify_hit_posts_relay_when_discord_disabled():
-    secret, pub = generate_relay_keypair()
+def test_notify_hit_is_chat_only_when_discord_is_disabled():
     settings = NotifySettings(
         enabled=False,
         webhook_url="",
         telegram_bot_token="",
         telegram_chat_id="",
-        relay_url="https://sctapi.ftqq.com/demo.send",
-        relay_seal_pubkey=pub,
     )
     with patch("btc_puzzle_lab.relay.requests.post") as post:
-        post.return_value.status_code = 200
-        post.return_value.text = "ok"
         results = notify_hit(_hit(), settings=settings)
-    assert results[0].channel == "relay"
-    assert results[0].ok is True
-    sent = post.call_args.kwargs.get("data") or {}
-    blob = str(sent)
-    assert "a" * 64 not in blob
-    assert "bpl1." in blob
-    opened = unseal_hit(extract_seal_token(blob), secret)
-    assert opened.private_key_hex == "a" * 64
+    assert results[0].channel == "none"
+    assert post.call_count == 0
 
 
 def test_deliver_relay_writes_outbox_without_key(tmp_path):

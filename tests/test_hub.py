@@ -69,7 +69,7 @@ def test_ingest_records_hit_and_skips_duplicate_sweep():
     stored = read_hits()
     assert len(stored) == 1
     assert stored[0].private_key_hex.lower().endswith("1")
-    assert notify_kwargs[0]["skip_relay"] is True
+    assert "skip_relay" not in notify_kwargs[0]
 
     second = ingest_sealed_hit(payload, sweep_fn=sweep_fn, notify_fn=notify_fn)
     assert second.status == "duplicate"
@@ -110,19 +110,17 @@ def test_ingest_skips_sweep_when_audit_fails():
     assert read_hits()[0].verified is False
 
 
-def test_notify_skip_relay_does_not_post_back_to_hub():
+def test_notify_hit_does_not_post_to_a_relay_url():
     settings = NotifySettings(
         enabled=True,
         webhook_url="https://discord.com/api/webhooks/1/x",
         telegram_bot_token="",
         telegram_chat_id="",
-        relay_url="https://127.0.0.1:8787/hit",
-        relay_seal_pubkey="ab" * 32,
     )
     with patch("btc_puzzle_lab.notify.requests.post") as post:
         post.return_value.status_code = 204
         post.return_value.text = ""
-        results = notify_hit(_bad_key_hit(), settings=settings, skip_relay=True)
+        results = notify_hit(_bad_key_hit(), settings=settings)
     assert all(item.channel != "relay" for item in results)
     assert results[0].channel == "webhook"
     assert post.call_count == 1

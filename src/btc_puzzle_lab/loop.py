@@ -7,7 +7,7 @@ Transfer stays behind existing AUTO_TRANSFER_* safety gates (disabled + dry-run)
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -26,8 +26,10 @@ from btc_puzzle_lab.doctor import doctor_ok, run_doctor
 from btc_puzzle_lab.engines import resolve_binary
 from btc_puzzle_lab.hits import Hit, read_hits
 from btc_puzzle_lab.notify import NotifyResult, format_notify_results, notify_hit
+from btc_puzzle_lab.relay import deliver_relay
 from btc_puzzle_lab.runlog import log_event
-from btc_puzzle_lab.strategy import HostProfile, probe_host
+from btc_puzzle_lab.settings import get_relay_settings
+from btc_puzzle_lab.strategy import GPU_ENGINES, HostProfile, probe_host
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit
 
 ResourceFilter = Literal["auto", "cpu", "gpu", "any"]
@@ -127,12 +129,10 @@ def run_once(
         raise RuntimeError("doctor reported blocking issues; fix then retry `once`")
 
     resolved = resolve_resource_filter(resource, profile)
-    if resolved == "gpu" and resolve_binary("bitcrack") is None and resolve_binary(
-        "rckangaroo"
-    ) is None:
+    if resolved == "gpu" and not any(resolve_binary(name) for name in GPU_ENGINES):
         raise RuntimeError(
             "GPU slot selected but no GPU solver is installed "
-            "(run: btc-puzzle-lab engines install --only bitcrack)"
+            "(run: btc-puzzle-lab engines install --only bitcrack,rckangaroo)"
         )
 
     sync_result: ImportResult | None = None
@@ -209,6 +209,7 @@ def run_once(
         if job.puzzle_id in focus and job.job_status == "hit"
     }
     transfer_by_id: dict[int, TransferResult] = {}
+    relay_cfg = get_relay_settings()
     if new_hit_ids:
         for hit in _hits_for_ids(new_hit_ids):
             result: AuditResult | None = None
@@ -217,21 +218,11 @@ def run_once(
                 if check_balance and result.address_ok and not result.error:
                     try:
                         balance = fetch_balance_sats(hit.address)
-                        result = AuditResult(
-                            hit=result.hit,
-                            address_ok=result.address_ok,
-                            derived_address=result.derived_address,
-                            balance_sats=balance,
-                            addr_type=result.addr_type,
-                        )
+                        result = replace(result, balance_sats=balance)
                     except Exception as exc:  # noqa: BLE001 — surface in audit row
-                        result = AuditResult(
-                            hit=result.hit,
-                            address_ok=result.address_ok,
-                            derived_address=result.derived_address,
-                            balance_sats=None,
+                        result = replace(
+                            result,
                             error=f"balance lookup failed: {exc}",
-                            addr_type=result.addr_type,
                         )
                 audits.append(result)
             # Transfer is its own switch. Nesting it under `audit` meant --no-audit
@@ -250,6 +241,15 @@ def run_once(
                         transfer=transfer_by_id.get(hit.puzzle_id),
                     )
                 )
+            # Sealed POST to the control hub is not a chat channel: --no-notify
+            # must not skip it, or hunt boxes would swallow hits.
+            if relay_cfg.url:
+                posted = deliver_relay(
+                    hit,
+                    url=relay_cfg.url,
+                    seal_pubkey=relay_cfg.seal_pubkey,
+                )
+                notifications.append(NotifyResult("relay", posted.ok, posted.message))
 
     message = (
         f"selected={selected_ids} attempted={batch_result.attempted} "

@@ -10,7 +10,13 @@ from btc_puzzle_lab.notify import (
     notify_hit,
 )
 from btc_puzzle_lab.paths import clear_path_cache
-from btc_puzzle_lab.settings import NotifySettings, get_notify_settings, validate_notify_settings
+from btc_puzzle_lab.settings import (
+    NotifySettings,
+    RelaySettings,
+    get_notify_settings,
+    validate_notify_settings,
+    validate_relay_settings,
+)
 from btc_puzzle_lab.transfer import TransferResult
 
 
@@ -77,15 +83,12 @@ def test_validate_notify_requires_channel_when_enabled():
     ) == []
 
 
-def test_validate_notify_requires_token_when_relay_url_is_set():
-    errors = validate_notify_settings(
-        NotifySettings(
-            enabled=False,
-            webhook_url="",
-            telegram_bot_token="",
-            telegram_chat_id="",
-            relay_url="https://control.example:8787/hit",
-            relay_seal_pubkey="ab" * 32,
+def test_validate_relay_requires_token_when_url_is_set():
+    errors = validate_relay_settings(
+        RelaySettings(
+            url="https://control.example:8787/hit",
+            seal_pubkey="ab" * 32,
+            token="",
         )
     )
     assert any("RELAY_TOKEN" in err for err in errors)

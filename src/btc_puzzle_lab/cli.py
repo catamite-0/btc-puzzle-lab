@@ -40,6 +40,7 @@ from btc_puzzle_lab.settings import (
     validate_transfer_settings,
 )
 from btc_puzzle_lab.strategy import (
+    SAFE_DP,
     adapt_recommendations,
     format_host_profile,
     plan_strategy,
@@ -234,7 +235,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         order=args.order,
         seed=args.seed,
         max_chunks=args.max_chunks,
-        dp=16 if args.dp is None else args.dp,
+        dp=SAFE_DP if args.dp is None else args.dp,
         timeout=_loop_timeout(args),
     )
     if args.auto:
@@ -1121,7 +1122,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dp",
         type=int,
         default=None,
-        help="RCKangaroo DP bits (default: adaptive with --auto, else 16)",
+        help="kangaroo DP bits (default: 30; with --auto, from the strategy plan)",
     )
     p_run.add_argument(
         "--workers",
@@ -1334,7 +1335,7 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(
             "--no-notify",
             action="store_true",
-            help="skip hit webhook/Telegram notify (NOTIFY_* in config/.env)",
+            help="skip Discord/Telegram/webhook (does not skip RELAY_URL to the hub)",
         )
         parser.add_argument(
             "--no-progress",

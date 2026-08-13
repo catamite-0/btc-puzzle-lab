@@ -64,3 +64,29 @@ def test_compute_tier_is_not_asked_for_a_gpu_solver(tmp_path, monkeypatch, build
     )
     names = {c.name for c in run_doctor()}
     assert "gpu_solver" not in names
+
+
+def test_gpu_solver_accepts_rckangaroo(tmp_path, monkeypatch, build_deps_present):
+    from btc_puzzle_lab.strategy import HostProfile
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    fake = tmp_path / "bin" / "RCKangaroo"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("x", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    monkeypatch.setattr(
+        "btc_puzzle_lab.doctor.probe_host",
+        lambda: HostProfile(
+            cpus=8,
+            mem_mb=32_768,
+            engines=frozenset({"rckangaroo"}),
+            gpu=True,
+            gpu_name="RTX 5090",
+            tier="gpu",
+        ),
+    )
+    check = next(c for c in run_doctor() if c.name == "gpu_solver")
+    assert check.ok
+    assert "rckangaroo" in check.detail

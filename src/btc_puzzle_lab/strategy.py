@@ -26,6 +26,7 @@ STANDARD_MEM_MB = 8192
 # discarding every accumulated point. Across dp 23..32 the extra work is under
 # 0.003% (ARCHITECTURE.md §8), so the largest survivable value is the default.
 SAFE_DP = 30
+PUBKEY_MIN_BITS = 32
 
 HostTier = Literal["constrained", "standard", "gpu", "compute"]
 ResourceClass = Literal["cpu", "gpu"]
@@ -333,7 +334,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     installed = profile.engines
 
     # Pubkey-class solvers first when bits are large enough.
-    if _has_pubkey(puzzle) and puzzle.bits >= 32:
+    if _has_pubkey(puzzle) and puzzle.bits >= PUBKEY_MIN_BITS:
         if "rckangaroo" in installed:
             return StrategyPlan(
                 engine="rckangaroo",
@@ -429,7 +430,7 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
         )
 
     # Algorithm-first fallback for unsolved / no-binary hosts.
-    if _has_pubkey(puzzle) and puzzle.bits >= 32:
+    if _has_pubkey(puzzle) and puzzle.bits >= PUBKEY_MIN_BITS:
         return StrategyPlan(
             engine="rckangaroo",
             threads=threads,

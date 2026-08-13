@@ -22,16 +22,13 @@ from dataclasses import dataclass
 from btc_puzzle_lab.catalog import Puzzle
 from btc_puzzle_lab.search import MAX_SEQUENTIAL_KEYS
 from btc_puzzle_lab.strategy import (
+    PUBKEY_MIN_BITS,
     SAFE_DP,
     SEQUENTIAL_BITS,
     HostProfile,
     ResourceClass,
 )
 from btc_puzzle_lab.toolchain import cuda_available
-
-# Kangaroo-class solvers need a range wide enough to be worth their setup; both
-# upstreams also refuse to run below this.
-PUBKEY_MIN_BITS = 32
 
 # GPU engine -> the CPU engine solving the same problem, for an explicit downgrade.
 _CPU_ALTERNATIVE = {

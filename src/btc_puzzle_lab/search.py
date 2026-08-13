@@ -536,7 +536,7 @@ def run_external(
     engine: str,
     *,
     threads: int = 2,
-    dp: int = 16,
+    dp: int = 30,
     timeout: float | None = None,
     progress: bool = True,
 ) -> SearchOutcome:
@@ -562,11 +562,6 @@ def run_external(
     return _record_hit(puzzle, result.secret, engine)
 
 
-# Backward-compatible alias used by older tests/docs.
-def run_keyhunt(puzzle: Puzzle, *, threads: int = 2) -> SearchOutcome:
-    return run_external(puzzle, "keyhunt", threads=threads)
-
-
 def run_puzzle(
     puzzle: Puzzle,
     *,
@@ -581,7 +576,7 @@ def run_puzzle(
     order: str = "sequential",
     seed: int | None = None,
     max_chunks: int | None = None,
-    dp: int = 16,
+    dp: int = 30,
     timeout: float | None = None,
 ) -> SearchOutcome:
     choice = (engine or puzzle.engine_default).lower()

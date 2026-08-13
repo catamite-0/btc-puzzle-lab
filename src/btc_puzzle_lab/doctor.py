@@ -11,12 +11,15 @@ from btc_puzzle_lab.engines import available_engines, format_engine_status, reso
 from btc_puzzle_lab.paths import CONFIG_DIR, STATE_DIR, workspace_root
 from btc_puzzle_lab.settings import (
     format_notify_policy,
+    format_relay_policy,
     get_notify_settings,
+    get_relay_settings,
     get_transfer_settings,
     validate_notify_settings,
+    validate_relay_settings,
     validate_transfer_settings,
 )
-from btc_puzzle_lab.strategy import probe_host
+from btc_puzzle_lab.strategy import GPU_ENGINES, probe_host
 from btc_puzzle_lab.toolchain import (
     cuda_available,
     detect_compute_cap,
@@ -95,17 +98,17 @@ def run_doctor() -> list[Check]:
             )
         )
 
-    # GPU hosts should surface a missing BitCrack before `once` burns idle hours.
+    # GPU hosts should surface a missing solver before `once` burns idle hours.
     # Tier "compute" is the high-CPU/no-GPU class, so it is not a GPU host.
     if host.gpu or host.tier == "gpu":
-        bitcrack = resolve_binary("bitcrack")
+        found = [name for name in sorted(GPU_ENGINES) if resolve_binary(name)]
         checks.append(
             Check(
                 "gpu_solver",
-                bitcrack is not None,
-                str(bitcrack)
-                if bitcrack is not None
-                else "missing BitCrack — run: btc-puzzle-lab engines install --only bitcrack",
+                bool(found),
+                ", ".join(found)
+                if found
+                else "missing BitCrack/RCKangaroo — run: btc-puzzle-lab engines install",
             )
         )
 
@@ -156,6 +159,21 @@ def run_doctor() -> list[Check]:
         )
     except ValueError as exc:
         checks.append(Check("notify_policy", False, str(exc)))
+
+    try:
+        relay = get_relay_settings()
+        relay_errors = validate_relay_settings(relay)
+        checks.append(
+            Check(
+                "relay_policy",
+                not relay_errors,
+                format_relay_policy(relay)
+                if not relay_errors
+                else "; ".join(relay_errors),
+            )
+        )
+    except ValueError as exc:
+        checks.append(Check("relay_policy", False, str(exc)))
 
     catalog = root / "data" / "puzzles.json"
     checks.append(
