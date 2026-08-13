@@ -65,9 +65,13 @@ def resolve_resource_filter(
     requested: ResourceFilter,
     host: HostProfile,
 ) -> Literal["cpu", "gpu", "any"]:
-    if requested == "auto":
-        return "gpu" if host.gpu or host.tier in {"gpu", "compute"} else "cpu"
-    return requested
+    if requested != "auto":
+        return requested
+    # Only tier "gpu" implies a GPU path: classify_tier returns it whenever a card
+    # or a GPU solver is present, so tier "compute" means the opposite — a big CPU
+    # box with neither. Treating "compute" as a GPU host sent exactly those hosts
+    # into the "no GPU solver installed" abort below on every `once`.
+    return "gpu" if host.gpu or host.tier == "gpu" else "cpu"
 
 
 def select_ready_jobs(
@@ -230,10 +234,14 @@ def run_once(
                             addr_type=result.addr_type,
                         )
                 audits.append(result)
-                if transfer and result.address_ok and not result.error:
-                    tr = sweep_hit(hit)
-                    transfers.append(tr)
-                    transfer_by_id[hit.puzzle_id] = tr
+            # Transfer is its own switch. Nesting it under `audit` meant --no-audit
+            # silently skipped the sweep as well. A failed audit still blocks it;
+            # with no audit at all, sweep_hit re-derives the address from the key
+            # before it signs anything, so the address↔key check is never skipped.
+            if transfer and (result is None or (result.address_ok and not result.error)):
+                tr = sweep_hit(hit)
+                transfers.append(tr)
+                transfer_by_id[hit.puzzle_id] = tr
             if notify:
                 notifications.extend(
                     notify_hit(

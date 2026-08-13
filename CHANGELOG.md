@@ -5,8 +5,35 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- `btc-puzzle-lab auto <id>`: one command from a payout address, an alert URL and a
+  puzzle id to a running search — host probe → engine choice → build dependencies →
+  clone at a pinned commit → compile → known-answer self-check → watch loop, with
+  every stage reported before the next begins (`docs/AUTO.md`)
+- `recommend.py`: engine choice derived from the target and the hardware only, never
+  from installed inventory. A GPU with no CUDA toolkit is reported as blocked with a
+  remedy rather than silently downgraded to the CPU, since that changes expected time
+  to solve by orders of magnitude
+- `auto` pins `dp=30` for kangaroo-class runs: the engine default of 16 grows the DP
+  table ~35 GB/h and is OOM-killed in ~3.4 h on a 116 GB host, discarding the table
+- `settings.bootstrap_config()` / `write_env_values()`: persist payout and notify
+  settings into `config/.env` (mode `0600`), preserving hand-written keys
+- `toolchain.ensure_build_deps()` / `ensure_engine()`: install missing compilers and
+  headers through apt/dnf (`sudo -n`, never an interactive prompt), then build and
+  verify exactly one engine
+- Per-target job boards (`state/plan_<id>.json`) so concurrent runs cannot overwrite
+  each other's plan
 - Hit notifications via `NOTIFY_WEBHOOK_URL` and/or Telegram (`NOTIFY_TELEGRAM_*`)
 - `once` / `watch` auto-notify on hit; `--no-notify` to skip; never ships private keys
+
+### Fixed
+- `once` / `watch --resource auto` aborted on every large CPU-only host: tier
+  `compute` was routed to the GPU queue, and that tier by definition has neither a
+  card nor a GPU solver. `adapt` and `doctor` made the same misclassification
+- `--no-audit` silently skipped the sweep as well, because the transfer step was
+  nested inside the audit branch. Transfer is its own switch again; a failed audit
+  still blocks it
+- `RCKANGAROO_PATH` was missing from the in-process env map, so a run that had just
+  built RCKangaroo did not export the path it produced
 
 ## [0.5.0] — 2026-08-09
 

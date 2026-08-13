@@ -28,6 +28,22 @@ def test_resolve_resource_auto_prefers_gpu_on_gpu_host():
     assert resolve_resource_filter("auto", cpu) == "cpu"
 
 
+def test_auto_resource_keeps_big_cpu_hosts_on_the_cpu_slot():
+    """tier "compute" is the high-CPU/no-GPU class, not a GPU host.
+
+    classify_tier only returns "compute" when there is neither a card nor a GPU
+    solver, so routing it to the gpu queue made `once --resource auto` abort with
+    "no GPU solver is installed" on every large CPU box.
+    """
+    compute = HostProfile(cpus=64, mem_mb=116_000, engines=frozenset(), tier="compute")
+    assert resolve_resource_filter("auto", compute) == "cpu"
+
+
+def test_explicit_resource_is_never_second_guessed():
+    for requested in ("cpu", "gpu", "any"):
+        assert resolve_resource_filter(requested, _gpu_host()) == requested
+
+
 def test_select_ready_jobs_picks_lowest_bits_gpu(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
@@ -98,6 +114,89 @@ def test_run_once_practice_hit_audits_without_transfer_config(tmp_path, monkeypa
     assert result.transfers
     assert result.transfers[0].status == "skipped"
     assert result.ok is True
+
+
+def test_transfer_is_not_gated_behind_audit(tmp_path, monkeypatch):
+    """--no-audit must not silently disable the sweep.
+
+    They are separate CLI switches, but the sweep used to sit inside the `if audit:`
+    block, so skipping verification also skipped the transfer with no output saying so.
+    """
+    from btc_puzzle_lab.transfer import TransferResult
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    swept: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.sweep_hit",
+        lambda hit, **kw: (
+            swept.append(hit.puzzle_id),
+            TransferResult(status="dry_run", message="stub"),
+        )[1],
+    )
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_once(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=False,
+        transfer=True,
+        notify=False,
+        progress=False,
+        host=host,
+    )
+    assert result.batch is not None and result.batch.hits == 1
+    assert result.audits == []
+    assert swept == [1]
+    assert [t.status for t in result.transfers] == ["dry_run"]
+
+
+def test_failed_audit_still_blocks_the_sweep(tmp_path, monkeypatch):
+    from btc_puzzle_lab.audit import AuditResult
+    from btc_puzzle_lab.transfer import TransferResult
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    swept: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.verify_hit",
+        lambda hit: AuditResult(
+            hit=hit,
+            address_ok=False,
+            derived_address="",
+            balance_sats=None,
+            error="address mismatch",
+        ),
+    )
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.sweep_hit",
+        lambda hit, **kw: (
+            swept.append(hit.puzzle_id),
+            TransferResult(status="dry_run", message="stub"),
+        )[1],
+    )
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_once(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=True,
+        transfer=True,
+        notify=False,
+        progress=False,
+        host=host,
+    )
+    assert swept == []
+    assert result.transfers == []
+    assert result.ok is False
 
 
 def test_run_watch_stops_on_hit(tmp_path, monkeypatch):

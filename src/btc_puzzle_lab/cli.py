@@ -6,6 +6,7 @@ from pathlib import Path
 
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.audit import audit_hits, export_audit_report
+from btc_puzzle_lab.autorun import STAGES, Stage, run_auto
 from btc_puzzle_lab.batch import (
     batch_plan_path,
     build_plan,
@@ -529,6 +530,58 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auto(args: argparse.Namespace) -> int:
+    if args.live:
+        print(
+            "WARNING: --live authorises real BTC broadcasts on a hit "
+            "(AUTO_TRANSFER_DRY_RUN=false).",
+            file=sys.stderr,
+        )
+    shown = 0
+
+    def emit(stage: Stage) -> None:
+        nonlocal shown
+        shown += 1
+        print(stage.format(shown, len(STAGES)), flush=True)
+
+    result = run_auto(
+        args.puzzle,
+        dest_addr=args.dest,
+        notify_url=args.notify,
+        telegram_token=args.telegram_token,
+        telegram_chat=args.telegram_chat,
+        live=args.live,
+        sync=not args.no_sync,
+        engine=args.engine,
+        allow_cpu_fallback=args.allow_cpu_fallback,
+        ignore_swept=args.ignore_swept,
+        build=not args.no_build,
+        install_deps=not args.no_install_deps,
+        selfcheck=not args.no_selfcheck,
+        selfcheck_timeout=args.selfcheck_timeout,
+        dp=args.dp,
+        threads=args.threads,
+        plan_only=args.plan_only,
+        max_hours=args.max_hours,
+        max_passes=args.max_passes,
+        max_seconds=args.max_seconds,
+        progress=not args.no_progress,
+        on_stage=emit,
+    )
+    if result.watch is not None:
+        print()
+        print(format_watch_result(result.watch))
+        if result.watch.last is not None:
+            for item in result.watch.last.transfers:
+                _print_transfer(item)
+    if result.message:
+        print()
+        print(result.message)
+    if result.ok:
+        return 0
+    return 2 if result.failed_stage == "config" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -536,6 +589,119 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_auto = sub.add_parser(
+        "auto",
+        help=(
+            "one command: pick the engine for this host, build it, and hunt "
+            "one puzzle unattended"
+        ),
+        description=(
+            "Configure once with --dest / --notify, then `auto <id>` probes the host, "
+            "picks the right solver, installs its build dependencies, clones and "
+            "compiles it at a pinned commit, verifies it against a known answer, and "
+            "runs the watch loop. A hit is audited, swept (dry-run unless --live) and "
+            "announced on the notify channel."
+        ),
+    )
+    p_auto.add_argument("puzzle", type=int, help="puzzle id to hunt, e.g. 140")
+    p_auto.add_argument(
+        "--dest",
+        default=None,
+        help="payout address; stored in config/.env and reused by later runs",
+    )
+    p_auto.add_argument(
+        "--notify",
+        default=None,
+        help="alert webhook URL (Discord / Slack / ntfy / custom), stored in config/.env",
+    )
+    p_auto.add_argument(
+        "--telegram-token",
+        default=None,
+        help="Telegram bot token (needs --telegram-chat)",
+    )
+    p_auto.add_argument(
+        "--telegram-chat",
+        default=None,
+        help="Telegram chat id (needs --telegram-token)",
+    )
+    p_auto.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "authorise real broadcasts on a hit. Without it a sweep is signed to "
+            "state/dryrun_*.txhex and never sent."
+        ),
+    )
+    p_auto.add_argument(
+        "--engine",
+        choices=_ENGINE_CHOICES,
+        default=None,
+        help="pin the engine instead of choosing one from the host profile",
+    )
+    p_auto.add_argument(
+        "--allow-cpu-fallback",
+        action="store_true",
+        help="if the GPU has no CUDA toolkit, run the CPU engine instead of stopping",
+    )
+    p_auto.add_argument(
+        "--ignore-swept",
+        action="store_true",
+        help="search even when the target's prize has already been claimed",
+    )
+    p_auto.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="show the engine decision and stop before building or searching",
+    )
+    p_auto.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="skip the catalog import and use the workspace catalog as-is",
+    )
+    p_auto.add_argument(
+        "--no-build",
+        action="store_true",
+        help="assume the solver is already installed",
+    )
+    p_auto.add_argument(
+        "--no-install-deps",
+        action="store_true",
+        help="do not apt/dnf install missing compilers and headers",
+    )
+    p_auto.add_argument(
+        "--no-selfcheck",
+        action="store_true",
+        help="skip solving a known-answer puzzle after the build",
+    )
+    p_auto.add_argument(
+        "--selfcheck-timeout",
+        type=float,
+        default=180.0,
+        help="self-check budget in seconds (default: 180)",
+    )
+    p_auto.add_argument(
+        "--dp",
+        type=int,
+        default=None,
+        help="override kangaroo distinguished-point bits (default: derived, 30)",
+    )
+    p_auto.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="override solver threads (default: from the host tier)",
+    )
+    p_auto.add_argument("--max-hours", type=float, default=None, help="stop after N hours")
+    p_auto.add_argument("--max-passes", type=int, default=None, help="stop after N passes")
+    p_auto.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="recycle the solver after N seconds per pass",
+    )
+    p_auto.add_argument("--no-progress", action="store_true", help="quiet solver progress")
+    p_auto.set_defaults(func=cmd_auto)
 
     p_list = sub.add_parser("list", help="list puzzles in the active catalog")
     p_list.set_defaults(func=cmd_list)

@@ -514,13 +514,14 @@ def adapt_recommendations(profile: HostProfile | None = None) -> list[str]:
         tips.append("no kangaroo-class solver — pubkey puzzles will stay blocked until configured")
     if host.disk_free_mb is not None and host.disk_free_mb < 512:
         tips.append("low free disk (<512 MiB) — coverage/batch state may fail to persist")
-    if host.gpu or host.tier in {"gpu", "compute"}:
+    # "compute" is the high-CPU/no-GPU tier, so it must not be sent down the GPU path.
+    if host.gpu or host.tier == "gpu":
         tips.append(
             "GPU VPS: one card → one puzzle; "
-            "btc-puzzle-lab once --ids 71 --resource gpu"
+            "btc-puzzle-lab auto 140   (or: once --ids 140 --resource gpu)"
         )
     else:
-        tips.append("run: btc-puzzle-lab once --resource cpu  (or plan/batch manually)")
+        tips.append("run: btc-puzzle-lab auto 71   (or: once --resource cpu)")
     return tips
 
 

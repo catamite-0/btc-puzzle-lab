@@ -17,8 +17,12 @@
 - Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
   bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
   `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
-- Automation: `host` / `adapt` → `engines install` → `once` / `watch`
-  (or `plan` → `batch` → `status`). Full loop docs: `docs/LOOP.md`.
+- Automation: `auto <id>` is the default entry point (config → catalog → host →
+  engine → build+verify → watch); docs in `docs/AUTO.md`. Manual path is
+  `host` / `adapt` → `engines install` → `once` / `watch` (or `plan` → `batch` →
+  `status`). Full loop docs: `docs/LOOP.md`.
+- Engine choice for `auto` lives in `recommend.py` and must stay inventory-blind:
+  it reads the target and the host, never `available_engines()` (ARCHITECTURE §5).
 - Resource model: one machine occupies one scarce slot (`gpu` or `cpu`);
   GPU VPS default is exclusive single-puzzle (`once --limit 1`).
 - Solver toolchain: `btc-puzzle-lab engines install` builds keyhunt + kangaroo

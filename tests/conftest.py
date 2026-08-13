@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from btc_puzzle_lab.paths import clear_path_cache
@@ -7,6 +9,21 @@ _ENGINE_PATH_VARS = (
     "KANGAROO_PATH",
     "BITCRACK_PATH",
     "RCKANGAROO_PATH",
+)
+
+# Keys `bootstrap_config` writes straight into os.environ so the running process
+# sees them without a reload. They must not survive the test that wrote them: a
+# leaked AUTO_TRANSFER_ENABLED=true turns a later test's expected "skipped" sweep
+# into a real explorer call.
+_CONFIG_VARS = (
+    "AUTO_TRANSFER_ENABLED",
+    "AUTO_TRANSFER_DRY_RUN",
+    "AUTO_TRANSFER_DEST_ADDR",
+    "AUTO_TRANSFER_LIVE_CONFIRM",
+    "NOTIFY_ENABLED",
+    "NOTIFY_WEBHOOK_URL",
+    "NOTIFY_TELEGRAM_BOT_TOKEN",
+    "NOTIFY_TELEGRAM_CHAT_ID",
 )
 
 
@@ -31,6 +48,12 @@ def isolated_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     for var in _ENGINE_PATH_VARS:
         monkeypatch.delenv(var, raising=False)
+    saved = {var: os.environ.get(var) for var in _CONFIG_VARS}
     clear_path_cache()
     yield
+    for var, value in saved.items():
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
     clear_path_cache()

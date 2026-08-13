@@ -164,3 +164,135 @@ def ensure_config_dir() -> Path:
 
     CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     return CONFIG_DIR
+
+
+_ENV_HEADER = (
+    "# btc-puzzle-lab local config. Never commit this file.",
+    "# Written by `btc-puzzle-lab auto`; hand edits are preserved.",
+    "# Full option list with comments: config/.env.example",
+)
+
+
+def write_env_values(values: dict[str, str], path: Path | None = None) -> Path:
+    """Merge ``KEY=value`` pairs into ``config/.env`` (mode 0600).
+
+    Existing lines are rewritten in place so hand-written settings, ordering and
+    comments survive; anything new is appended. The file holds a sweep destination,
+    so it is created 0600 and never widened afterwards.
+    """
+    ensure_config_dir()
+    target = Path(path) if path is not None else Path(ENV_FILE)
+    existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
+    if not existing:
+        existing = list(_ENV_HEADER)
+
+    remaining = dict(values)
+    out: list[str] = []
+    for line in existing:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in remaining:
+                out.append(f"{key}={remaining.pop(key)}")
+                continue
+        out.append(line)
+    if remaining:
+        if out and out[-1].strip():
+            out.append("")
+        out.extend(f"{key}={value}" for key, value in remaining.items())
+
+    fd = os.open(target, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out).rstrip("\n") + "\n")
+    os.chmod(target, 0o600)
+    return target
+
+
+@dataclass(frozen=True)
+class ConfigUpdate:
+    path: Path
+    keys: tuple[str, ...]
+    dest_addr: str
+    notify_channels: tuple[str, ...]
+    live: bool
+
+    def format(self) -> str:
+        if not self.keys:
+            return "config unchanged (using existing config/.env)"
+        mode = "LIVE BROADCAST" if self.live else "dry-run"
+        bits = [f"wrote {len(self.keys)} key(s) to {self.path}"]
+        if self.dest_addr:
+            bits.append(f"sweep dest={self.dest_addr} mode={mode}")
+        if self.notify_channels:
+            bits.append(f"notify={','.join(self.notify_channels)}")
+        return "; ".join(bits)
+
+
+def bootstrap_config(
+    *,
+    dest_addr: str | None = None,
+    notify_url: str | None = None,
+    telegram_token: str | None = None,
+    telegram_chat: str | None = None,
+    live: bool = False,
+    path: Path | None = None,
+) -> ConfigUpdate:
+    """Persist the three things an unattended run needs: where funds go, where
+    alerts go, and whether broadcasting is authorised.
+
+    Enabling a sweep destination turns auto-transfer on in **dry-run**: a hit is
+    signed and written to ``state/dryrun_*.txhex`` but nothing is broadcast. Live
+    broadcast is a separate, explicit decision (``live=True``) because it moves
+    real BTC, and it writes the confirm phrase the transfer layer demands.
+    """
+    values: dict[str, str] = {}
+    channels: list[str] = []
+
+    if dest_addr:
+        dest_addr = dest_addr.strip()
+        if not is_valid_btc_address(dest_addr):
+            raise ValueError(f"not a valid BTC address: {dest_addr}")
+        values["AUTO_TRANSFER_DEST_ADDR"] = dest_addr
+        values["AUTO_TRANSFER_ENABLED"] = "true"
+        values["AUTO_TRANSFER_DRY_RUN"] = "false" if live else "true"
+        if live:
+            values["AUTO_TRANSFER_LIVE_CONFIRM"] = LIVE_CONFIRM_PHRASE
+    elif live:
+        raise ValueError("--live needs a sweep destination (--dest)")
+
+    if notify_url:
+        notify_url = notify_url.strip()
+        if not notify_url.lower().startswith(("http://", "https://")):
+            raise ValueError("notify URL must be an http(s) URL")
+        values["NOTIFY_WEBHOOK_URL"] = notify_url
+        values["NOTIFY_ENABLED"] = "true"
+        channels.append("webhook")
+
+    if telegram_token or telegram_chat:
+        if not (telegram_token and telegram_chat):
+            raise ValueError("Telegram needs both a bot token and a chat id")
+        values["NOTIFY_TELEGRAM_BOT_TOKEN"] = telegram_token.strip()
+        values["NOTIFY_TELEGRAM_CHAT_ID"] = telegram_chat.strip()
+        values["NOTIFY_ENABLED"] = "true"
+        channels.append("telegram")
+
+    if not values:
+        return ConfigUpdate(
+            path=Path(path) if path is not None else Path(ENV_FILE),
+            keys=(),
+            dest_addr="",
+            notify_channels=(),
+            live=False,
+        )
+
+    target = write_env_values(values, path=path)
+    # dotenv loads with override=False, so a value already in this process's
+    # environment would shadow what we just wrote. Apply it directly too.
+    os.environ.update(values)
+    return ConfigUpdate(
+        path=target,
+        keys=tuple(sorted(values)),
+        dest_addr=values.get("AUTO_TRANSFER_DEST_ADDR", ""),
+        notify_channels=tuple(channels),
+        live=live,
+    )

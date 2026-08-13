@@ -8,33 +8,45 @@ catalog → search engine → state/HITS.jsonl → local audit → optional swee
 
 This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-Designing against the scheduling layer, or reusing the engine adapters elsewhere? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Want it to just run? [docs/AUTO.md](docs/AUTO.md). Designing against the scheduling layer, or reusing the engine adapters elsewhere? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **Release:** `v0.5.0` — full loop (`once`) + GPU resource slotting for VPS hosts
 
 ## Quick start
 
-Local / CPU:
-
-```bash
-python3 -m venv .venv-dev
-source .venv-dev/bin/activate
-python -m pip install -r requirements-dev.txt
-python -m pip install -e .
-btc-puzzle-lab engines install
-btc-puzzle-lab doctor
-btc-puzzle-lab list
-btc-puzzle-lab run 1
-```
-
-GPU experiment pod (RunPod etc.):
+Three settings and a puzzle id — everything else is derived:
 
 ```bash
 git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
-bash scripts/machine-bootstrap.sh
-source .venv/bin/activate
-btc-puzzle-lab once --ids 71 --resource gpu
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -e .
+
+btc-puzzle-lab auto 140 \
+    --dest bc1qyour-payout-address \
+    --notify https://ntfy.sh/your-topic
+```
+
+That probes the host, picks the engine this machine and target call for, installs
+its build dependencies, clones it at a pinned commit, compiles it, proves it works
+against a puzzle with a known answer, and starts hunting. Later runs need only the
+id. Sweeps stay **dry-run** until you pass `--live`. Full guide:
+[docs/AUTO.md](docs/AUTO.md).
+
+```bash
+btc-puzzle-lab auto 140 --plan-only   # show the engine decision, build nothing
+btc-puzzle-lab auto 140               # reuses the stored dest / notify
+```
+
+Manual control instead:
+
+```bash
+python -m pip install -r requirements-dev.txt
+btc-puzzle-lab engines install
+btc-puzzle-lab doctor
+btc-puzzle-lab list
+btc-puzzle-lab run 1
+# GPU pod (RunPod etc.): bash scripts/machine-bootstrap.sh
 # details: docs/MACHINE.md , docs/LOOP.md
 ```
 
@@ -63,15 +75,18 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 ## Stable workflow
 
 ```text
+auto <id>   (config → catalog → host → engine → build+verify → watch → audit → sweep)
+
+# or the same steps by hand:
 host / adapt → engines install → once
                  (sync → plan → one gpu/cpu slot → audit → optional sweep)
 
-# or the same steps manually:
 import-catalog → plan → batch → status → audit → transfer
 ```
 
 | Command | Role |
 |---|---|
+| `auto` | One target, end to end: pick engine → build it → hunt ([docs/AUTO.md](docs/AUTO.md)) |
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |

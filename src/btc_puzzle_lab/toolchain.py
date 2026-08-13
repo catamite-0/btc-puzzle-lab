@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,6 +54,13 @@ PINNED_COMMITS = {
 INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack", "rckangaroo")
 MANUAL_ONLY: dict[str, str] = {}
 
+ENGINE_ENV_VARS = {
+    "keyhunt": "KEYHUNT_PATH",
+    "kangaroo": "KANGAROO_PATH",
+    "bitcrack": "BITCRACK_PATH",
+    "rckangaroo": "RCKANGAROO_PATH",
+}
+
 
 @dataclass(frozen=True)
 class InstallResult:
@@ -90,15 +98,38 @@ def _which_ok(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def missing_build_tools() -> list[str]:
-    needed = ["git", "make", "g++"]
-    return [name for name in needed if not _which_ok(name)]
+def missing_build_tools(extra: Sequence[str] = ()) -> list[str]:
+    """Build tools not on PATH. ``extra`` adds engine-specific ones (e.g. cmake)."""
+    needed = ["git", "make", "g++", *extra]
+    return [name for name in dict.fromkeys(needed) if not _which_ok(name)]
 
 
 # header -> Debian/Ubuntu package providing it.
 _REQUIRED_HEADERS = {
     "gmp.h": "libgmp-dev",
     "openssl/sha.h": "libssl-dev",
+}
+
+# Tools an engine needs on top of the common git/make/g++ set.
+ENGINE_TOOLS: dict[str, tuple[str, ...]] = {
+    "rckangaroo": ("cmake",),
+}
+
+_APT_FOR_TOOL = {
+    "git": "git",
+    "make": "build-essential",
+    "g++": "build-essential",
+    "cmake": "cmake",
+}
+_DNF_FOR_TOOL = {
+    "git": "git",
+    "make": "make",
+    "g++": "gcc-c++",
+    "cmake": "cmake",
+}
+_DNF_FOR_HEADER = {
+    "gmp.h": "gmp-devel",
+    "openssl/sha.h": "openssl-devel",
 }
 
 
@@ -136,6 +167,134 @@ def build_deps_hint(tools: list[str], headers: list[str]) -> str:
         f"missing build dependencies: {missing}\n"
         f"  Debian/Ubuntu: sudo apt install -y {' '.join(dict.fromkeys(packages))}\n"
         f"  Fedora/RHEL:   sudo dnf install -y git gcc-c++ make gmp-devel openssl-devel"
+    )
+
+
+@dataclass(frozen=True)
+class DepResult:
+    ok: bool
+    message: str
+    installed: tuple[str, ...] = ()
+    missing_tools: tuple[str, ...] = ()
+    missing_headers: tuple[str, ...] = ()
+
+
+def _package_manager() -> tuple[str, list[str], list[str]] | None:
+    """(name, update argv, install argv prefix), already privilege-wrapped.
+
+    ``sudo -n`` on purpose: an unattended bring-up must fail with a readable
+    message rather than block forever on a password prompt nobody will type.
+    """
+    if os.geteuid() == 0:
+        prefix: list[str] = []
+    elif _which_ok("sudo"):
+        prefix = ["sudo", "-n"]
+    else:
+        return None
+    if _which_ok("apt-get"):
+        return (
+            "apt-get",
+            [*prefix, "apt-get", "update", "-qq"],
+            [*prefix, "apt-get", "install", "-y", "-qq"],
+        )
+    if _which_ok("dnf"):
+        return "dnf", [*prefix, "dnf", "makecache", "-q"], [*prefix, "dnf", "install", "-y", "-q"]
+    return None
+
+
+def required_packages(manager: str, tools: Sequence[str], headers: Sequence[str]) -> list[str]:
+    if manager == "dnf":
+        tool_map, header_map = _DNF_FOR_TOOL, _DNF_FOR_HEADER
+    else:
+        tool_map, header_map = _APT_FOR_TOOL, _REQUIRED_HEADERS
+    packages = [tool_map[t] for t in tools if t in tool_map]
+    packages += [header_map[h] for h in headers if h in header_map]
+    return list(dict.fromkeys(packages))
+
+
+def ensure_build_deps(
+    engine: str | None = None,
+    *,
+    auto_install: bool = True,
+    timeout: float = 900.0,
+) -> DepResult:
+    """Make sure this host can compile ``engine`` (or the common set when None).
+
+    Returns rather than raises, so a caller can report the exact apt line when the
+    host has no package manager or no privilege to use one.
+    """
+    extra = ENGINE_TOOLS.get(engine or "", ())
+    tools = missing_build_tools(extra)
+    headers = missing_build_headers()
+    if not tools and not headers:
+        return DepResult(ok=True, message="build dependencies present")
+    if not auto_install:
+        return DepResult(
+            ok=False,
+            message=build_deps_hint(tools, headers),
+            missing_tools=tuple(tools),
+            missing_headers=tuple(headers),
+        )
+
+    manager = _package_manager()
+    if manager is None:
+        reason = (
+            "no supported package manager on PATH"
+            if os.geteuid() == 0
+            else "not root and sudo is unavailable"
+        )
+        return DepResult(
+            ok=False,
+            message=f"cannot install build dependencies ({reason}).\n{build_deps_hint(tools, headers)}",
+            missing_tools=tuple(tools),
+            missing_headers=tuple(headers),
+        )
+
+    name, update_cmd, install_cmd = manager
+    packages = required_packages(name, tools, headers)
+    if not packages:
+        return DepResult(
+            ok=False,
+            message=build_deps_hint(tools, headers),
+            missing_tools=tuple(tools),
+            missing_headers=tuple(headers),
+        )
+    try:
+        subprocess.run(update_cmd, capture_output=True, text=True, check=False, timeout=timeout)
+        proc = subprocess.run(
+            [*install_cmd, *packages],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return DepResult(
+            ok=False,
+            message=f"package install failed to run: {exc}\n{build_deps_hint(tools, headers)}",
+            missing_tools=tuple(tools),
+            missing_headers=tuple(headers),
+        )
+
+    still_tools = missing_build_tools(extra)
+    still_headers = missing_build_headers()
+    if still_tools or still_headers:
+        detail = ((proc.stderr or "") + (proc.stdout or "")).strip()[-500:]
+        return DepResult(
+            ok=False,
+            message=(
+                f"{name} install did not satisfy everything "
+                f"(still missing: {', '.join(still_tools + still_headers)})"
+                + (f"\n{detail}" if detail else "")
+            ),
+            installed=tuple(packages),
+            missing_tools=tuple(still_tools),
+            missing_headers=tuple(still_headers),
+        )
+    return DepResult(
+        ok=True,
+        message=f"installed via {name}: {', '.join(packages)}",
+        installed=tuple(packages),
     )
 
 
@@ -278,14 +437,8 @@ def _write_engines_env(paths: dict[str, Path]) -> Path:
                 continue
             key, value = raw.split("=", 1)
             existing[key.strip()] = value.strip().strip('"').strip("'")
-    mapping = {
-        "keyhunt": "KEYHUNT_PATH",
-        "kangaroo": "KANGAROO_PATH",
-        "bitcrack": "BITCRACK_PATH",
-        "rckangaroo": "RCKANGAROO_PATH",
-    }
     for name, path in paths.items():
-        env_key = mapping.get(name)
+        env_key = ENGINE_ENV_VARS.get(name)
         if env_key:
             existing[env_key] = str(path)
     lines = [
@@ -644,11 +797,7 @@ def install_engines(
         env_path = _write_engines_env(installed_paths)
         # Ensure current process sees the new paths without requiring a restart.
         for name, path in installed_paths.items():
-            env_key = {
-                "keyhunt": "KEYHUNT_PATH",
-                "kangaroo": "KANGAROO_PATH",
-                "bitcrack": "BITCRACK_PATH",
-            }.get(name)
+            env_key = ENGINE_ENV_VARS.get(name)
             if env_key and not os.environ.get(env_key):
                 os.environ[env_key] = str(path)
         results.append(
@@ -660,6 +809,119 @@ def install_engines(
             )
         )
     return results
+
+
+@dataclass(frozen=True)
+class EnsureResult:
+    """Outcome of "make this one engine runnable on this host"."""
+
+    engine: str
+    ok: bool
+    already_present: bool
+    binary: Path | None
+    message: str
+    deps: DepResult | None = None
+    install: InstallResult | None = None
+    selfcheck: SelfCheckResult | None = None
+
+
+def ensure_engine(
+    engine: str,
+    *,
+    force: bool = False,
+    install_deps: bool = True,
+    selfcheck: bool = True,
+    selfcheck_timeout: float = 180.0,
+) -> EnsureResult:
+    """Get ``engine`` from "named" to "verified working", doing whatever is missing.
+
+    Build deps → clone at the pinned commit → compile → install into ``bin/`` →
+    solve a puzzle with a known answer. Each step is skipped when already
+    satisfied, so this is cheap to call on every run.
+    """
+    from btc_puzzle_lab.engines import resolve_binary
+
+    if engine not in INSTALLABLE:
+        return EnsureResult(
+            engine=engine,
+            ok=True,
+            already_present=True,
+            binary=None,
+            message="built-in engine; no external toolchain needed",
+        )
+
+    def _verify(binary: Path | None, *, already: bool, install: InstallResult | None,
+                deps: DepResult | None, note: str) -> EnsureResult:
+        check = None
+        if selfcheck and engine in SELFCHECK_PUZZLES:
+            check = selfcheck_engine(engine, timeout=selfcheck_timeout)
+            if not check.ok:
+                return EnsureResult(
+                    engine=engine,
+                    ok=False,
+                    already_present=already,
+                    binary=binary,
+                    message=f"{note}, but the self-check failed: {check.message}",
+                    deps=deps,
+                    install=install,
+                    selfcheck=check,
+                )
+            note = f"{note}; self-check {check.message} in {check.seconds:.1f}s"
+        return EnsureResult(
+            engine=engine,
+            ok=True,
+            already_present=already,
+            binary=binary,
+            message=note,
+            deps=deps,
+            install=install,
+            selfcheck=check,
+        )
+
+    existing = resolve_binary(engine)
+    if existing is not None and not force:
+        return _verify(existing, already=True, install=None, deps=None, note="already installed")
+
+    deps = ensure_build_deps(engine, auto_install=install_deps)
+    if not deps.ok:
+        return EnsureResult(
+            engine=engine,
+            ok=False,
+            already_present=False,
+            binary=None,
+            message=deps.message,
+            deps=deps,
+        )
+
+    try:
+        results = install_engines([engine], force=force)
+    except (RuntimeError, ValueError) as exc:
+        return EnsureResult(
+            engine=engine,
+            ok=False,
+            already_present=False,
+            binary=None,
+            message=str(exc),
+            deps=deps,
+        )
+    install = next((r for r in results if r.name == engine), None)
+    if install is None or not install.ok:
+        return EnsureResult(
+            engine=engine,
+            ok=False,
+            already_present=False,
+            binary=install.binary if install else None,
+            message=install.message if install else f"{engine} was not installed",
+            deps=deps,
+            install=install,
+        )
+    return _verify(
+        install.binary,
+        already=False,
+        install=install,
+        deps=deps,
+        note=install.message,
+    )
 
 
 def format_install_results(results: list[InstallResult]) -> str:

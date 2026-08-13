@@ -5,13 +5,21 @@ from btc_puzzle_lab.cli import main
 from btc_puzzle_lab.engines import ExternalEngineResult, resolve_binary
 from btc_puzzle_lab.paths import clear_path_cache
 from btc_puzzle_lab.toolchain import (
+    ENGINE_ENV_VARS,
+    ENGINE_TOOLS,
+    INSTALLABLE,
     PINNED_COMMITS,
     SELFCHECK_PUZZLES,
     InstallResult,
+    SelfCheckResult,
     _write_engines_env,
     build_gencode,
+    ensure_build_deps,
+    ensure_engine,
     format_install_results,
     install_engines,
+    missing_build_tools,
+    required_packages,
     selfcheck_engine,
 )
 
@@ -226,3 +234,95 @@ def test_selfcheck_puzzles_are_solvable_by_their_engine():
             assert puzzle.pubkey_compressed_hex, engine
         if engine == "rckangaroo":
             assert puzzle.bits - 1 >= 32, engine
+
+
+def test_every_installable_engine_has_an_env_var():
+    # rckangaroo used to be missing from the in-process map, so a fresh install
+    # did not export RCKANGAROO_PATH for the run that had just built it.
+    assert set(ENGINE_ENV_VARS) == set(INSTALLABLE)
+
+
+def test_rckangaroo_declares_its_extra_build_tool(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._which_ok", lambda name: name != "cmake")
+    assert ENGINE_TOOLS["rckangaroo"] == ("cmake",)
+    assert missing_build_tools() == []
+    assert missing_build_tools(ENGINE_TOOLS["rckangaroo"]) == ["cmake"]
+
+
+def test_required_packages_map_per_manager():
+    assert required_packages("apt-get", ["g++", "cmake"], ["gmp.h"]) == [
+        "build-essential",
+        "cmake",
+        "libgmp-dev",
+    ]
+    assert required_packages("dnf", ["g++"], ["openssl/sha.h"]) == [
+        "gcc-c++",
+        "openssl-devel",
+    ]
+
+
+def test_ensure_build_deps_reports_the_install_line_when_not_installing(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda extra=(): ["g++"])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: ["gmp.h"])
+    result = ensure_build_deps("keyhunt", auto_install=False)
+    assert not result.ok
+    assert "build-essential" in result.message
+    assert "libgmp-dev" in result.message
+    assert result.missing_headers == ("gmp.h",)
+
+
+def test_ensure_build_deps_is_a_noop_when_everything_is_present(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda extra=(): [])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: [])
+    result = ensure_build_deps("keyhunt")
+    assert result.ok
+    assert result.installed == ()
+
+
+def test_ensure_build_deps_explains_a_missing_package_manager(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda extra=(): ["g++"])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: [])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._package_manager", lambda: None)
+    result = ensure_build_deps("keyhunt", auto_install=True)
+    assert not result.ok
+    assert "cannot install build dependencies" in result.message
+
+
+def test_ensure_engine_skips_built_in_engines():
+    result = ensure_engine("sequential")
+    assert result.ok
+    assert result.already_present
+    assert "built-in" in result.message
+
+
+def test_ensure_engine_short_circuits_on_an_existing_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    fake = tmp_path / "bin" / "keyhunt"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+
+    def explode(*_a, **_k):
+        raise AssertionError("must not rebuild an engine that is already installed")
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.install_engines", explode)
+    result = ensure_engine("keyhunt", selfcheck=False)
+    assert result.ok and result.already_present
+    assert result.binary == fake.resolve()
+
+
+def test_ensure_engine_reports_a_failed_selfcheck_as_not_usable(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    fake = tmp_path / "bin" / "keyhunt"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(
+        "btc_puzzle_lab.toolchain.selfcheck_engine",
+        lambda name, timeout=180.0: SelfCheckResult(name, False, 20, "returned no key"),
+    )
+    result = ensure_engine("keyhunt", selfcheck=True)
+    assert not result.ok
+    assert "self-check failed" in result.message

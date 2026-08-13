@@ -96,7 +96,8 @@ def run_doctor() -> list[Check]:
         )
 
     # GPU hosts should surface a missing BitCrack before `once` burns idle hours.
-    if host.gpu or host.tier in {"gpu", "compute"}:
+    # Tier "compute" is the high-CPU/no-GPU class, so it is not a GPU host.
+    if host.gpu or host.tier == "gpu":
         bitcrack = resolve_binary("bitcrack")
         checks.append(
             Check(
