@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-13
+
+Control VPS hub on top of `auto`, plus the quality pass before deploy.
+
 ### Added
 - Control VPS hub: hunt boxes `auto --relay https://<control>:8787/hit`; the
   always-on host runs `hub` to unseal, notify, and sweep (`RELAY_TOKEN`,

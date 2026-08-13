@@ -10,7 +10,7 @@ This is a practice tool for **already-solved** catalog entries. It does **not** 
 
 Want it to just run? [docs/AUTO.md](docs/AUTO.md). Designing against the scheduling layer, or reusing the engine adapters elsewhere? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-**Release:** `v0.6.0` — `auto`: pick the engine for this host, build it, hunt one target unattended
+**Release:** `v0.7.0` — `auto` hunt + `hub` control VPS (unseal, notify, sweep)
 
 ## Quick start
 
@@ -58,7 +58,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.6.0"
+python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.7.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
