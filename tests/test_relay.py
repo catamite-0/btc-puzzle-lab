@@ -101,6 +101,27 @@ def test_deliver_relay_writes_outbox_without_key(tmp_path):
     assert "bpl1." in outbox
 
 
+def test_deliver_relay_sends_bearer_and_omits_key(monkeypatch):
+    monkeypatch.setenv("RELAY_TOKEN", "control-hub-token-1")
+    _secret, pub = generate_relay_keypair()
+    with patch("btc_puzzle_lab.relay.requests.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.text = "ok"
+        result = deliver_relay(
+            _hit(),
+            url="https://control.example:8787/hit",
+            seal_pubkey=pub,
+        )
+    assert result.ok is True
+    headers = post.call_args.kwargs.get("headers") or {}
+    assert headers.get("Authorization") == "Bearer control-hub-token-1"
+    payload = post.call_args.kwargs.get("json") or {}
+    blob = str(payload)
+    assert "a" * 64 not in blob
+    assert payload.get("puzzle_id") == 71
+    assert isinstance(payload.get("sealed"), str) and payload["sealed"].startswith("bpl1.")
+
+
 def test_config_relay_satisfies_alert_requirement(capsys):
     dest = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH"
     _, pub = generate_relay_keypair()

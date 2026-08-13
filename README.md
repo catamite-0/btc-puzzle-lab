@@ -32,22 +32,25 @@ into `bin/`, then `watch`es that puzzle. Hits notify (no private keys) and
 dry-run a sweep to dest. Live broadcast still needs
 `AUTO_TRANSFER_LIVE_CONFIRM` plus `start --live`.
 
-If the VPS cannot reach Discord/Telegram, generate a seal key at home and
-forward the solution through a hop the VPS *can* POST to (Server酱, ntfy, …):
+Restricted hunt boxes should not sweep or talk to Discord. Run this lab as an
+always-on **control VPS** (unseal + notify + sweep) and point each hunt box at it:
 
 ```bash
-# at home (open network) — keep config/relay-secret here
+# control VPS (open network) — keep config/relay-secret here; do not set RELAY_URL
 btc-puzzle-lab relay-keygen
+btc-puzzle-lab config --dest <your-btc-address> --notify https://discord.com/api/webhooks/...
+btc-puzzle-lab config --new-relay-token
+btc-puzzle-lab hub --host 0.0.0.0 --port 8787
 
-# on the VPS — pubkey only, never the secret
-btc-puzzle-lab config --dest <your-btc-address> \
-  --relay https://sctapi.ftqq.com/<sendkey>.send \
-  --relay-seal-pubkey <hex-from-keygen>
+# each hunt VPS — pubkey + token only (no dest, no relay-secret)
+btc-puzzle-lab config --relay https://<control>:8787/hit \
+  --relay-seal-pubkey <hex-from-keygen> --relay-token <same-token>
 btc-puzzle-lab start 71
-
-# at home, paste the sealed= token from the hop
-btc-puzzle-lab unseal --show-key bpl1....
 ```
+
+The hunt POST is ciphertext plus a bearer token. Put TLS (caddy/nginx) in front
+of `hub` and firewall the port. Live broadcast still needs
+`AUTO_TRANSFER_LIVE_CONFIRM` on the control VPS.
 
 GPU experiment pod (RunPod etc.):
 
@@ -92,9 +95,14 @@ Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scr
 ## Stable workflow
 
 ```text
+# single machine
 config dest+notify → start <puzzle>
         (host probe → pick engine → fetch/compile → watch until hit)
                  audit → notify → optional sweep
+
+# split: hunt boxes search; control VPS executes
+control: relay-keygen + dest/notify + hub
+hunt:    config --relay https://control:8787/hit → start <puzzle>
 
 # or the same steps manually:
 host / adapt → engines install → once
@@ -103,8 +111,10 @@ import-catalog → plan → batch → status → audit → transfer
 
 | Command | Role |
 |---|---|
-| `config` | Set sweep dest + notify webhook/Telegram (shared) |
+| `config` | Set dest / notify / relay (shared) |
 | `start` | Pick engine for this host, install it, run until hit |
+| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
+| `relay-keygen` | Seal keypair on the control VPS (pubkey only on hunt boxes) |
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
@@ -352,7 +362,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/coverage_<id>.json` | Range coverage ledger / chunk status (gitignored) |
 | `state/batch_plan.json` | Catalog automation board (gitignored via `state/`) |
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
-| `config/.env` | Local transfer config (gitignored) |
+| `config/.env` | Local transfer / notify / relay config (gitignored) |
+| `config/relay-secret` | Control VPS seal secret (gitignored, mode `0600`) |
 | `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
 | `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
 | `vendor/` | Cloned upstream solver sources (`engines install`, gitignored) |

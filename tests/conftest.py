@@ -21,6 +21,7 @@ _OPERATOR_VARS = (
     "RELAY_URL",
     "RELAY_SEAL_PUBKEY",
     "RELAY_SEAL_SECRET",
+    "RELAY_TOKEN",
 )
 
 

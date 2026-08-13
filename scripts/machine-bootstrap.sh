@@ -36,8 +36,13 @@ cat <<'EOF'
 
 bootstrap done.
 
-Next:
+Next (single machine):
   btc-puzzle-lab config --dest <your-btc-address> --notify https://...
+  btc-puzzle-lab start 71
+
+Hunt box posting to a control VPS hub:
+  btc-puzzle-lab config --relay https://<control>:8787/hit \
+      --relay-seal-pubkey <hex> --relay-token <token>
   btc-puzzle-lab start 71
 
 Or the manual loop (one GPU slot):

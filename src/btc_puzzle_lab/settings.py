@@ -58,6 +58,7 @@ class NotifySettings:
     telegram_chat_id: str
     relay_url: str = ""
     relay_seal_pubkey: str = ""
+    relay_token: str = ""
 
     @property
     def configured(self) -> bool:
@@ -132,6 +133,7 @@ def get_notify_settings() -> NotifySettings:
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
         relay_url=os.getenv("RELAY_URL", "").strip(),
         relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
+        relay_token=os.getenv("RELAY_TOKEN", "").strip(),
     )
 
 
@@ -173,7 +175,8 @@ def format_notify_policy(settings: NotifySettings | None = None) -> str:
     if cfg.relay_url:
         channels.append("relay+seal" if cfg.relay_seal_pubkey else "relay")
     ch = ",".join(channels) if channels else "(none)"
-    return f"enabled={cfg.enabled} channels={ch}"
+    token = "set" if cfg.relay_token else "unset"
+    return f"enabled={cfg.enabled} channels={ch} relay_token={token}"
 
 
 def ensure_config_dir() -> Path:

@@ -10,6 +10,9 @@ btc-puzzle-lab config --dest <your cold wallet> --notify https://...
 # or copy config/.env.example → config/.env and set AUTO_TRANSFER_DEST_ADDR=
 ```
 
+On a split setup, dest lives on the **control VPS** that runs `hub`, not on hunt
+boxes. Live confirm stays on that same host.
+
 Optional knobs:
 
 | Knob | Default | Notes |

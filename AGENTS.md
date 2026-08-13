@@ -7,9 +7,9 @@
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
   Post-hit ops: `docs/TRANSFER.md` (dry-run → verify → live / broadcast-dry-run).
-- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram, or `RELAY_URL` when those
-  are blocked; payloads must never include plaintext private keys or signed tx
-  hex. Sealed solutions use `RELAY_SEAL_PUBKEY` (`relay-keygen` / `unseal`).
+- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram, or sealed `RELAY_URL` to the
+  control VPS `hub` when those are blocked. Payloads must never include
+  plaintext private keys or signed tx hex. `relay-keygen` / `hub` / `unseal`.
   Keep independent from coinsense Discord/Gemini.
 - Never commit `state/`, `config/.env`, `dist/`, or hit/dry-run files.
 - Do not print private keys or signed tx hex in chat, logs, commits, or PR text.
@@ -19,9 +19,9 @@
 - Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
   bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
   `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
-- Automation: `config` (dest + notify) → `start <puzzle>`
-  (adapt → fetch/compile → watch). Manual: `host` / `adapt` → `engines install`
-  → `once` / `watch` (or `plan` → `batch` → `status`). Full loop docs: `docs/LOOP.md`.
+- Automation: `config` (dest + notify) → `start <puzzle>` on one box, or hunt
+  `start` → control `hub` (unseal / notify / sweep). Manual: `host` / `adapt`
+  → `engines install` → `once` / `watch`. Full loop docs: `docs/LOOP.md`.
 - Resource model: one machine occupies one scarce slot (`gpu` or `cpu`);
   GPU VPS default is exclusive single-puzzle (`once --limit 1`).
 - Solver toolchain: `btc-puzzle-lab engines install` builds keyhunt + kangaroo

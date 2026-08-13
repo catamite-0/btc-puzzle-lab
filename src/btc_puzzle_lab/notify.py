@@ -209,13 +209,18 @@ def notify_hit(
     audit: AuditResult | None = None,
     transfer: TransferResult | None = None,
     settings: NotifySettings | None = None,
+    skip_relay: bool = False,
 ) -> list[NotifyResult]:
     cfg = settings or get_notify_settings()
     send_chat = cfg.enabled and bool(
         cfg.webhook_url or (cfg.telegram_bot_token and cfg.telegram_chat_id)
     )
-    send_relay = bool(cfg.relay_url)
+    send_relay = bool(cfg.relay_url) and not skip_relay
     if not send_chat and not send_relay:
+        if skip_relay:
+            if not cfg.enabled:
+                return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
+            return [NotifyResult("none", True, "hub ingest: chat unset, relay skipped")]
         if not cfg.enabled:
             return [NotifyResult("none", True, "NOTIFY_ENABLED=false")]
         return [

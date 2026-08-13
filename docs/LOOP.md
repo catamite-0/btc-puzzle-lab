@@ -3,9 +3,15 @@
 Product path:
 
 ```text
+# one machine
 config dest+notify  →  start <puzzle>
     host probe → pick engine → clone/build → watch until hit
         → audit → notify → dry-run sweep (live still gated)
+
+# split (restricted hunt VPS + always-on control VPS)
+control: relay-keygen + dest/notify + hub
+hunt:    config --relay https://control:8787/hit → start <puzzle>
+         POST sealed hit → hub unseal → notify → sweep
 ```
 
 This is **not** the public btcpuzzle.info pool client.
@@ -86,26 +92,41 @@ NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic   # or Discord/Slack webhook
 `once` / `watch` send notify automatically when enabled. Disable per-run with `--no-notify`.
 Payload includes puzzle id, address, engine, audit/transfer status only.
 
-## Restricted network (no Discord/Telegram)
+## Split roles: hunt box vs control VPS
 
-The hunt VPS often cannot POST to Discord or Telegram. Put a hop it *can*
-reach in `RELAY_URL`, and seal the solution to a key that never leaves home:
+The always-on VPS is **controller + executor**. Hunt boxes only search and POST
+a sealed hit. `config/relay-secret` stays on the control host.
 
-```bash
-# home
-btc-puzzle-lab relay-keygen
-
-# VPS
-btc-puzzle-lab config --dest <addr> --relay https://sctapi.ftqq.com/<key>.send \
-  --relay-seal-pubkey <hex>
-btc-puzzle-lab start 71
-
-# home
-btc-puzzle-lab unseal --show-key bpl1....
+```text
+hunt:  start 71  →  POST /hit  (ciphertext + bearer token)
+control hub:  auth → unseal → HITS.jsonl → audit → Discord/Telegram → sweep dest
 ```
 
-The hop sees ciphertext only. Failed POSTs land in `state/relay_outbox.jsonl`;
-retry with `btc-puzzle-lab relay-flush`. Plaintext keys are never written there.
+```bash
+# control VPS (do not set RELAY_URL here — that would loop)
+btc-puzzle-lab relay-keygen
+btc-puzzle-lab config --dest <addr> --notify https://discord.com/api/webhooks/...
+btc-puzzle-lab config --new-relay-token
+btc-puzzle-lab hub --host 0.0.0.0 --port 8787
+
+# hunt VPS (no dest, no relay-secret)
+btc-puzzle-lab config --relay https://<control>:8787/hit \
+  --relay-seal-pubkey <hex> --relay-token <same-token>
+btc-puzzle-lab start 71
+```
+
+`hub` refuses to start without `RELAY_TOKEN` (16+ chars) and `config/relay-secret`.
+Put TLS in front and firewall the port. Notify from the hub uses `skip_relay` so
+it does not POST back to itself. Duplicate hits are recorded once (no second sweep).
+
+Hunt `start` without `--dest` forwards the sealed solution and does not enable
+local transfer. Keep dest + live confirm on the control VPS only.
+
+Failed hunt POSTs still land in `state/relay_outbox.jsonl` on the hunt box;
+retry with `btc-puzzle-lab relay-flush`. Ciphertext only — never a plaintext key.
+
+Manual hop (Server酱 / ntfy) still works: same `RELAY_*` on the hunt box, then
+`unseal --show-key` on the machine that holds `relay-secret`.
 
 ## Long GPU runs
 

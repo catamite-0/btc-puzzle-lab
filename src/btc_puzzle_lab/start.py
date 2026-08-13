@@ -55,6 +55,7 @@ class OperatorConfig:
     telegram_chat_id: str = ""
     relay_url: str = ""
     relay_seal_pubkey: str = ""
+    relay_token: str = ""
     puzzle_id: int | None = None
     live: bool = False
 
@@ -147,6 +148,7 @@ def load_operator_config() -> OperatorConfig:
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
         relay_url=os.getenv("RELAY_URL", "").strip(),
         relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
+        relay_token=os.getenv("RELAY_TOKEN", "").strip(),
         puzzle_id=puzzle_id,
         live=live,
     )
@@ -161,6 +163,7 @@ def merge_operator_config(
     telegram_chat_id: str | None = None,
     relay_url: str | None = None,
     relay_seal_pubkey: str | None = None,
+    relay_token: str | None = None,
     puzzle_id: int | None = None,
     live: bool | None = None,
 ) -> OperatorConfig:
@@ -178,6 +181,7 @@ def merge_operator_config(
         relay_seal_pubkey=(
             relay_seal_pubkey if relay_seal_pubkey is not None else cfg.relay_seal_pubkey
         ).strip(),
+        relay_token=(relay_token if relay_token is not None else cfg.relay_token).strip(),
         puzzle_id=puzzle_id if puzzle_id is not None else cfg.puzzle_id,
         live=cfg.live if live is None else live,
     )
@@ -204,22 +208,35 @@ def config_field_errors(cfg: OperatorConfig) -> list[str]:
         errors.append("--relay-seal-pubkey / RELAY_SEAL_PUBKEY must be 32-byte hex")
     if cfg.relay_seal_pubkey and not cfg.relay_url:
         errors.append("relay seal pubkey set but --relay URL is empty")
+    if cfg.relay_token and len(cfg.relay_token) < 16:
+        errors.append("RELAY_TOKEN must be at least 16 characters")
     if cfg.puzzle_id is not None and cfg.puzzle_id < 1:
         errors.append("puzzle id must be >= 1")
     return errors
 
 
+def operator_gaps(cfg: OperatorConfig) -> list[str]:
+    """What is still missing before a hunt or a single-machine start can run."""
+    gaps: list[str] = []
+    if not cfg.dest_addr and not cfg.relay_configured:
+        gaps.append("set a sweep address with: btc-puzzle-lab config --dest <btc-address>")
+    if not cfg.alert_configured:
+        gaps.append(
+            "set notify with: btc-puzzle-lab config --notify <https-url> "
+            "(or --relay https://<control>:8787/hit on a hunt box)"
+        )
+    if cfg.relay_url and not cfg.relay_seal_pubkey:
+        gaps.append("set --relay-seal-pubkey from `relay-keygen` on the control VPS")
+    return gaps
+
+
 def operator_errors(cfg: OperatorConfig, *, require_puzzle: bool = False) -> list[str]:
     errors = config_field_errors(cfg)
-    if not cfg.dest_addr:
-        errors.append("set a sweep address with: btc-puzzle-lab config --dest <btc-address>")
-    if not cfg.alert_configured:
-        errors.append(
-            "set notify with: btc-puzzle-lab config --notify <https-url> "
-            "(or --relay <reachable-url> when Discord/Telegram are blocked)"
-        )
+    errors.extend(operator_gaps(cfg))
     if require_puzzle and cfg.puzzle_id is None:
         errors.append("pass a puzzle id: btc-puzzle-lab start 71")
+    if cfg.live and not cfg.dest_addr:
+        errors.append("live sweep needs --dest on the machine that broadcasts (the control VPS)")
     if cfg.live:
         confirm = os.getenv("AUTO_TRANSFER_LIVE_CONFIRM", "").strip()
         if confirm != LIVE_CONFIRM_PHRASE:
@@ -249,6 +266,8 @@ def persist_operator_config(cfg: OperatorConfig) -> Path:
         updates["RELAY_URL"] = cfg.relay_url
     if cfg.relay_seal_pubkey:
         updates["RELAY_SEAL_PUBKEY"] = cfg.relay_seal_pubkey
+    if cfg.relay_token:
+        updates["RELAY_TOKEN"] = cfg.relay_token
     if cfg.puzzle_id is not None:
         updates[PUZZLE_ENV] = str(cfg.puzzle_id)
     target = Path(ENV_FILE)
@@ -271,14 +290,21 @@ def format_operator_config(cfg: OperatorConfig | None = None) -> str:
         relay = "url + seal" if item.relay_seal_pubkey else "url (alert only)"
     else:
         relay = "(unset)"
-    dest = item.dest_addr or "(unset)"
+    dest = item.dest_addr or ("(hub sweep)" if item.relay_url else "(unset)")
     puzzle = f"#{item.puzzle_id}" if item.puzzle_id is not None else "(unset)"
-    transfer = "live broadcast" if item.live else "dry-run on hit"
+    if item.dest_addr:
+        transfer = "live broadcast" if item.live else "dry-run on hit"
+    elif item.relay_url:
+        transfer = "forward sealed hit to hub (no local sweep)"
+    else:
+        transfer = "(unset)"
+    token = "set" if item.relay_token else "unset"
     return "\n".join(
         [
             f"dest       : {dest}",
             f"notify     : {ch}",
             f"relay      : {relay}",
+            f"relay token: {token}",
             f"puzzle     : {puzzle}  (last start; override with start <id>)",
             f"transfer   : {transfer}",
             f"env        : {ENV_FILE}",
@@ -504,7 +530,6 @@ def format_start_prep(prep: StartPrep, *, watch: bool = True) -> str:
     puzzle = prep.puzzle
     plan = prep.plan
     mode = "watch until hit" if watch else "single once pass"
-    transfer = "live broadcast" if prep.config.live else "dry-run sweep on hit"
     channels: list[str] = []
     if prep.config.webhook_url:
         channels.append("webhook")
@@ -512,9 +537,18 @@ def format_start_prep(prep: StartPrep, *, watch: bool = True) -> str:
         channels.append("telegram")
     if prep.config.relay_url:
         channels.append("relay+seal" if prep.config.relay_seal_pubkey else "relay")
+    if prep.config.dest_addr:
+        dest = prep.config.dest_addr
+        transfer = "live broadcast" if prep.config.live else "dry-run sweep on hit"
+    elif prep.config.relay_url:
+        dest = "(hub sweep)"
+        transfer = "forward sealed hit to hub (no local sweep)"
+    else:
+        dest = "(unset)"
+        transfer = "dry-run sweep on hit"
     lines = [
         f"workspace  : {workspace_root()}",
-        f"dest       : {prep.config.dest_addr}",
+        f"dest       : {dest}",
         f"notify     : {','.join(channels) or '(none)'}",
         f"transfer   : {transfer}",
         f"host       : tier={prep.host.tier} cpus={prep.host.cpus} "

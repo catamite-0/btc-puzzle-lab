@@ -33,11 +33,12 @@ Never commit:
 Hit and dry-run files are written with mode `0600` when created by this tool.
 `state/batch_plan.json` stores routing metadata only (no private keys).
 
-Relay (`RELAY_URL`) is for hosts that cannot reach Discord/Telegram. The
-solution is sealed to `RELAY_SEAL_PUBKEY` (from `relay-keygen`). The matching
-secret stays in gitignored `config/relay-secret` on the receiving machine.
-Relay payloads, outbox rows, and webhook/Telegram bodies must never contain a
-plaintext private key. `unseal` prints the key only with `--show-key`.
+The control VPS (`hub`) holds `config/relay-secret` and the sweep dest. Hunt
+boxes get only `RELAY_SEAL_PUBKEY` plus a shared `RELAY_TOKEN` (bearer auth).
+Relay payloads, outbox rows, hub HTTP responses, and webhook/Telegram bodies
+must never contain a plaintext private key. `unseal` prints the key only with
+`--show-key`. Do not set `RELAY_URL` on the hub host (ingest already
+`skip_relay`s to avoid a loop). Bind `hub` behind TLS and a firewall.
 
 Host overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`) affect strategy knobs
 only; they are not credentials.

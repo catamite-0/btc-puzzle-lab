@@ -1,4 +1,5 @@
 from btc_puzzle_lab.cli import main
+from btc_puzzle_lab.relay import generate_relay_keypair
 from btc_puzzle_lab.start import (
     OperatorConfig,
     format_start_prep,
@@ -89,6 +90,32 @@ def test_prepare_local_engine_skips_install():
     assert prep.plan.engine == "sequential"
     assert prep.installed == []
     assert "skipped (local engine" in format_start_prep(prep)
+
+
+def test_cli_start_prepare_hunt_without_dest(capsys):
+    _, pub = generate_relay_keypair()
+    code = main(
+        [
+            "start",
+            "1",
+            "--relay",
+            "https://127.0.0.1:8787/hit",
+            "--relay-seal-pubkey",
+            pub,
+            "--relay-token",
+            "control-hub-token-1",
+            "--prepare-only",
+            "--no-sync",
+            "--no-install",
+            "--no-selfcheck",
+            "--no-doctor",
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "method     : sequential" in out
+    assert "hub sweep" in out
+    assert "control-hub-token-1" not in out
 
 
 def test_cli_start_prepare_only_practice(capsys):

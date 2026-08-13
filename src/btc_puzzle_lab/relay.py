@@ -231,30 +231,51 @@ def read_outbox() -> list[dict[str, Any]]:
     return rows
 
 
-def _post_relay(url: str, text: str, *, sealed: str | None, timeout: float) -> RelayResult:
+def _relay_headers() -> dict[str, str]:
+    token = os.getenv("RELAY_TOKEN", "").strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _post_relay(
+    url: str,
+    text: str,
+    *,
+    sealed: str | None,
+    timeout: float,
+    extra: dict[str, Any] | None = None,
+) -> RelayResult:
     host = (urlparse(url).hostname or "").lower()
+    headers = _relay_headers()
+    payload: dict[str, Any] = {
+        "title": "btc-puzzle-lab HIT",
+        "message": text,
+        "body": text,
+        "sealed": sealed,
+    }
+    if extra:
+        payload.update(extra)
     try:
         if "ftqq.com" in host or "serverchan" in host:
             resp = requests.post(
                 url,
                 data={"title": "btc-puzzle-lab HIT", "desp": text},
+                headers=headers or None,
                 timeout=timeout,
             )
         elif "pushplus.plus" in host:
             resp = requests.post(
                 url,
                 json={"title": "btc-puzzle-lab HIT", "content": text},
+                headers=headers or None,
                 timeout=timeout,
             )
         else:
             resp = requests.post(
                 url,
-                json={
-                    "title": "btc-puzzle-lab HIT",
-                    "message": text,
-                    "body": text,
-                    "sealed": sealed,
-                },
+                json=payload,
+                headers=headers or None,
                 timeout=timeout,
             )
         if 200 <= resp.status_code < 300:
@@ -285,7 +306,13 @@ def deliver_relay(
         "error": "",
     }
     _append_outbox(row)
-    result = _post_relay(url, text, sealed=sealed, timeout=timeout)
+    result = _post_relay(
+        url,
+        text,
+        sealed=sealed,
+        timeout=timeout,
+        extra={"puzzle_id": hit.puzzle_id, "address": hit.address},
+    )
     rows = read_outbox()
     if rows:
         rows[-1]["delivered"] = result.ok
@@ -314,11 +341,17 @@ def flush_outbox(*, timeout: float = 15.0) -> list[RelayResult]:
         sealed = row.get("sealed")
         if not url or not text:
             continue
+        extra: dict[str, Any] = {}
+        if row.get("puzzle_id") is not None:
+            extra["puzzle_id"] = row["puzzle_id"]
+        if row.get("address"):
+            extra["address"] = row["address"]
         result = _post_relay(
             url,
             text,
             sealed=sealed if isinstance(sealed, str) else None,
             timeout=timeout,
+            extra=extra or None,
         )
         results.append(result)
         row["delivered"] = result.ok

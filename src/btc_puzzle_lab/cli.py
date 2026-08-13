@@ -22,6 +22,7 @@ from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
 from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
 from btc_puzzle_lab.engines import format_engine_status
 from btc_puzzle_lab.hits import read_hits
+from btc_puzzle_lab.hub import generate_relay_token, serve_hub
 from btc_puzzle_lab.loop import (
     LoopResult,
     WatchResult,
@@ -45,6 +46,7 @@ from btc_puzzle_lab.start import (
     format_start_prep,
     merge_operator_config,
     operator_errors,
+    operator_gaps,
     persist_operator_config,
     prepare_start,
     run_start,
@@ -105,10 +107,26 @@ def _print_transfer(result: TransferResult) -> None:
 
 
 def cmd_config(args: argparse.Namespace) -> int:
+    new_token: str | None = None
+    relay_token = args.relay_token
+    if args.new_relay_token:
+        if relay_token:
+            print("error: pass either --relay-token or --new-relay-token", file=sys.stderr)
+            return 2
+        new_token = generate_relay_token()
+        relay_token = new_token
     changing = any(
         getattr(args, name) is not None
-        for name in ("dest", "notify", "telegram_token", "telegram_chat", "relay", "relay_seal_pubkey")
-    )
+        for name in (
+            "dest",
+            "notify",
+            "telegram_token",
+            "telegram_chat",
+            "relay",
+            "relay_seal_pubkey",
+            "relay_token",
+        )
+    ) or bool(args.new_relay_token)
     cfg = merge_operator_config(
         dest_addr=args.dest,
         webhook_url=args.notify,
@@ -116,6 +134,7 @@ def cmd_config(args: argparse.Namespace) -> int:
         telegram_chat_id=args.telegram_chat,
         relay_url=args.relay,
         relay_seal_pubkey=args.relay_seal_pubkey,
+        relay_token=relay_token,
     )
     if changing:
         errors = config_field_errors(cfg)
@@ -124,11 +143,10 @@ def cmd_config(args: argparse.Namespace) -> int:
             return 2
         persist_operator_config(cfg)
     print(format_operator_config(cfg if changing else None))
-    still = [
-        line
-        for line in operator_errors(cfg, require_puzzle=False)
-        if line.startswith("set a sweep") or line.startswith("set notify")
-    ]
+    if new_token:
+        print(f"relay token : {new_token}")
+        print("copy onto hunt boxes: btc-puzzle-lab config --relay-token <that-token>")
+    still = operator_gaps(cfg)
     if still:
         print("still needed:")
         for line in still:
@@ -145,6 +163,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         telegram_chat_id=args.telegram_chat,
         relay_url=args.relay,
         relay_seal_pubkey=args.relay_seal_pubkey,
+        relay_token=args.relay_token,
         puzzle_id=puzzle,
         live=True if args.live else None,
     )
@@ -153,10 +172,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("error: " + "\n".join(errors), file=sys.stderr)
         print(
             "\n"
-            "set dest + a reachable alert once, then pass a puzzle id:\n"
+            "single machine: dest + notify, then a puzzle id:\n"
             "  btc-puzzle-lab config --dest <btc-address> --notify https://...\n"
-            "  btc-puzzle-lab config --dest <btc-address> --relay https://... "
-            "--relay-seal-pubkey <hex>\n"
+            "  btc-puzzle-lab start 71\n"
+            "hunt box → control VPS hub:\n"
+            "  btc-puzzle-lab config --relay https://<control>:8787/hit "
+            "--relay-seal-pubkey <hex> --relay-token <token>\n"
             "  btc-puzzle-lab start 71",
             file=sys.stderr,
         )
@@ -210,13 +231,18 @@ def cmd_start(args: argparse.Namespace) -> int:
 def cmd_relay_keygen(_: argparse.Namespace) -> int:
     secret, pubkey = generate_relay_keypair()
     path = write_relay_secret(secret)
-    print(f"wrote secret : {path} (mode 0600; keep this machine only)")
+    print(f"wrote secret : {path} (mode 0600; keep this control host only)")
     print(f"pubkey       : {pubkey}")
-    print("on the VPS:")
+    print("on this control VPS:")
+    print("  btc-puzzle-lab config --dest <btc-address> --notify https://...")
+    print("  btc-puzzle-lab config --new-relay-token")
+    print("  btc-puzzle-lab hub --host 0.0.0.0 --port 8787")
+    print("on each hunt VPS (no relay-secret, dest stays on the hub):")
     print(
-        "  btc-puzzle-lab config --relay <reachable-url> "
-        f"--relay-seal-pubkey {pubkey}"
+        "  btc-puzzle-lab config --relay https://<control>:8787/hit "
+        f"--relay-seal-pubkey {pubkey} --relay-token <same-token>"
     )
+    print("  btc-puzzle-lab start 71")
     return 0
 
 
@@ -255,6 +281,23 @@ def cmd_relay_flush(_: argparse.Namespace) -> int:
         if not item.ok:
             fails += 1
     return 1 if fails else 0
+
+
+def cmd_hub(args: argparse.Namespace) -> int:
+    try:
+        serve_hub(
+            host=args.host,
+            port=args.port,
+            sweep=not args.no_sweep,
+            notify=not args.no_notify,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("hub stopped")
+        return 0
+    return 0
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -744,18 +787,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_config.add_argument(
         "--relay",
         default=None,
-        help="reachable hit hop when Discord/Telegram are blocked (Server酱/ntfy/https)",
+        help="hunt box: POST sealed hits here (control hub /hit, or Server酱/ntfy)",
     )
     p_config.add_argument(
         "--relay-seal-pubkey",
         default=None,
-        help="X25519 pubkey hex from `relay-keygen` (seals the solution)",
+        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
+    )
+    p_config.add_argument(
+        "--relay-token",
+        default=None,
+        help="shared bearer token (hunt and hub must match; never printed by config show)",
+    )
+    p_config.add_argument(
+        "--new-relay-token",
+        action="store_true",
+        help="generate a RELAY_TOKEN and print it once",
     )
     p_config.set_defaults(func=cmd_config)
 
     p_keygen = sub.add_parser(
         "relay-keygen",
-        help="create a seal keypair at home; copy only the pubkey to the VPS",
+        help="create a seal keypair on the control VPS; copy only the pubkey to hunt boxes",
     )
     p_keygen.set_defaults(func=cmd_relay_keygen)
 
@@ -777,6 +830,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="retry undelivered relay outbox rows",
     )
     p_flush.set_defaults(func=cmd_relay_flush)
+
+    p_hub = sub.add_parser(
+        "hub",
+        help="control VPS: receive sealed hits, unseal, notify, sweep",
+    )
+    p_hub.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default 0.0.0.0; put TLS/firewall in front)",
+    )
+    p_hub.add_argument(
+        "--port",
+        type=int,
+        default=8787,
+        help="listen port (default 8787)",
+    )
+    p_hub.add_argument(
+        "--no-sweep",
+        action="store_true",
+        help="record + notify only (do not call sweep_hit)",
+    )
+    p_hub.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="record + sweep only (do not post Discord/Telegram)",
+    )
+    p_hub.set_defaults(func=cmd_hub)
 
     p_start = sub.add_parser(
         "start",
@@ -812,12 +892,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument(
         "--relay",
         default=None,
-        help="reachable hit hop (otherwise RELAY_URL in config/.env)",
+        help="control hub URL, e.g. https://<control>:8787/hit",
     )
     p_start.add_argument(
         "--relay-seal-pubkey",
         default=None,
         help="X25519 pubkey hex that can unseal the solution",
+    )
+    p_start.add_argument(
+        "--relay-token",
+        default=None,
+        help="shared bearer token for the control hub",
     )
     p_start.add_argument(
         "--live",
