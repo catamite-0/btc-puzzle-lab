@@ -37,7 +37,11 @@ cat <<'EOF'
 bootstrap done.
 
 Next (full loop, one GPU slot):
-  btc-puzzle-lab once --ids 71 --resource gpu
+  btc-puzzle-lab auto 140 --dest <addr> --notify https://...
+
+Hunt box posting to a control VPS hub:
+  btc-puzzle-lab auto 140 --relay https://<control>:8787/hit \
+      --relay-seal-pubkey <hex> --relay-token <token>
 
 Or manual board:
   btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose

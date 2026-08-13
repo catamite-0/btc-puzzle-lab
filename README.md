@@ -38,6 +38,9 @@ btc-puzzle-lab auto 140 --plan-only   # show the engine decision, build nothing
 btc-puzzle-lab auto 140               # reuses the stored dest / notify
 ```
 
+Restricted hunt VPS: post sealed hits to an always-on control host that runs
+`hub` (unseal + Discord + sweep). Dest stays there. See [docs/AUTO.md](docs/AUTO.md).
+
 Manual control instead:
 
 ```bash
@@ -87,6 +90,8 @@ import-catalog → plan → batch → status → audit → transfer
 | Command | Role |
 |---|---|
 | `auto` | One target, end to end: pick engine → build it → hunt ([docs/AUTO.md](docs/AUTO.md)) |
+| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
+| `config` | Persist dest / notify / relay without starting a search |
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
@@ -336,7 +341,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/coverage_<id>.json` | Range coverage ledger / chunk status (gitignored) |
 | `state/batch_plan.json` | Catalog automation board (gitignored via `state/`) |
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
-| `config/.env` | Local transfer config (gitignored) |
+| `config/.env` | Local transfer / notify / relay config (gitignored) |
+| `config/relay-secret` | Control VPS seal secret (gitignored, mode `0600`) |
 | `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
 | `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
 | `vendor/` | Cloned upstream solver sources (`engines install`, gitignored) |

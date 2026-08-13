@@ -13,6 +13,9 @@ cp config/.env.example config/.env
 #   AUTO_TRANSFER_DEST_ADDR=<your cold wallet>
 ```
 
+On a split setup, dest lives on the **control VPS** that runs `hub`, not on hunt
+boxes. Live confirm stays on that same host.
+
 Optional knobs:
 
 | Knob | Default | Notes |

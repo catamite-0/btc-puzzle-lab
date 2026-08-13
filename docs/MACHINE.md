@@ -50,8 +50,12 @@ Confirm compute capability shows **12.0** (reported as `120`) on 5090.
 ## 4. Run the loop (recommended)
 
 ```bash
-# exclusive GPU slot — pin #71 and let BitCrack hold the card
-btc-puzzle-lab once --ids 71 --resource gpu
+# exclusive GPU slot
+btc-puzzle-lab auto 140 --dest bc1q… --notify https://ntfy.sh/your-topic
+
+# typical rental: this pod is a hunt box; dest/notify/sweep live on the control VPS
+# btc-puzzle-lab auto 140 --relay https://<control>:8787/hit \
+#   --relay-seal-pubkey <hex> --relay-token <token>
 
 # optional budgeted session (auto-stops at wall clock):
 # btc-puzzle-lab watch --ids 71 --resource gpu --max-hours 6
