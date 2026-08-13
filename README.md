@@ -32,6 +32,23 @@ into `bin/`, then `watch`es that puzzle. Hits notify (no private keys) and
 dry-run a sweep to dest. Live broadcast still needs
 `AUTO_TRANSFER_LIVE_CONFIRM` plus `start --live`.
 
+If the VPS cannot reach Discord/Telegram, generate a seal key at home and
+forward the solution through a hop the VPS *can* POST to (Server酱, ntfy, …):
+
+```bash
+# at home (open network) — keep config/relay-secret here
+btc-puzzle-lab relay-keygen
+
+# on the VPS — pubkey only, never the secret
+btc-puzzle-lab config --dest <your-btc-address> \
+  --relay https://sctapi.ftqq.com/<sendkey>.send \
+  --relay-seal-pubkey <hex-from-keygen>
+btc-puzzle-lab start 71
+
+# at home, paste the sealed= token from the hop
+btc-puzzle-lab unseal --show-key bpl1....
+```
+
 GPU experiment pod (RunPod etc.):
 
 ```bash

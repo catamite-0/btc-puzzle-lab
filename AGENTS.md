@@ -7,8 +7,10 @@
 - Auto-transfer defaults: disabled + dry-run. Live broadcast requires
   `AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC`.
   Post-hit ops: `docs/TRANSFER.md` (dry-run → verify → live / broadcast-dry-run).
-- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram; payloads must never include
-  private keys or signed tx hex. Keep independent from coinsense Discord/Gemini.
+- Hit notify: `NOTIFY_ENABLED` + webhook/Telegram, or `RELAY_URL` when those
+  are blocked; payloads must never include plaintext private keys or signed tx
+  hex. Sealed solutions use `RELAY_SEAL_PUBKEY` (`relay-keygen` / `unseal`).
+  Keep independent from coinsense Discord/Gemini.
 - Never commit `state/`, `config/.env`, `dist/`, or hit/dry-run files.
 - Do not print private keys or signed tx hex in chat, logs, commits, or PR text.
   CLI may show keys only with explicit `--show-key`.

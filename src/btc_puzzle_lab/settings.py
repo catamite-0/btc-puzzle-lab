@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from btc_puzzle_lab.crypto import is_valid_btc_address
 from btc_puzzle_lab.paths import ENV_FILE, REPO_ROOT
+from btc_puzzle_lab.relay import is_seal_pubkey
 
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
@@ -55,10 +56,14 @@ class NotifySettings:
     webhook_url: str
     telegram_bot_token: str
     telegram_chat_id: str
+    relay_url: str = ""
+    relay_seal_pubkey: str = ""
 
     @property
     def configured(self) -> bool:
         if self.webhook_url:
+            return True
+        if self.relay_url:
             return True
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
@@ -125,17 +130,27 @@ def get_notify_settings() -> NotifySettings:
         webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
         telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
+        relay_url=os.getenv("RELAY_URL", "").strip(),
+        relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
     )
 
 
 def validate_notify_settings(settings: NotifySettings) -> list[str]:
     errors: list[str] = []
+    if settings.relay_url:
+        parsed = settings.relay_url.lower()
+        if not (parsed.startswith("https://") or parsed.startswith("http://")):
+            errors.append("RELAY_URL must be an http(s) URL")
+        if settings.relay_seal_pubkey and not is_seal_pubkey(settings.relay_seal_pubkey):
+            errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
+    elif settings.relay_seal_pubkey:
+        errors.append("RELAY_SEAL_PUBKEY set but RELAY_URL is empty")
     if not settings.enabled:
         return errors
     if not settings.configured:
         errors.append(
-            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL nor "
-            "NOTIFY_TELEGRAM_BOT_TOKEN+NOTIFY_TELEGRAM_CHAT_ID is set"
+            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL, Telegram, "
+            "nor RELAY_URL is set"
         )
     if settings.webhook_url:
         parsed = settings.webhook_url.lower()
@@ -155,6 +170,8 @@ def format_notify_policy(settings: NotifySettings | None = None) -> str:
         channels.append("webhook")
     if cfg.telegram_bot_token and cfg.telegram_chat_id:
         channels.append("telegram")
+    if cfg.relay_url:
+        channels.append("relay+seal" if cfg.relay_seal_pubkey else "relay")
     ch = ",".join(channels) if channels else "(none)"
     return f"enabled={cfg.enabled} channels={ch}"
 

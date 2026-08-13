@@ -80,6 +80,14 @@ Done. What the numbers mean:
 To leave it running for the rest of the rental:
 
   export BTC_PUZZLE_LAB_DP=30      # flat DP table; the default fills RAM in hours
+  # Discord/Telegram are unreachable here. Use a hop you can POST to, and seal
+  # the solution to a pubkey generated at home (`relay-keygen`):
+  ./.venv-run/bin/btc-puzzle-lab config --dest <your-btc-address> \
+      --relay https://sctapi.ftqq.com/<sendkey>.send \
+      --relay-seal-pubkey <hex>
+  ./.venv-run/bin/btc-puzzle-lab start 140
+
+  # or the manual loop if you have no hop:
   ./.venv-run/bin/btc-puzzle-lab watch --ids 140 --resource gpu --no-sync \
       --plan-file state/plan_140.json
 EOF

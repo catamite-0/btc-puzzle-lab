@@ -86,6 +86,27 @@ NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic   # or Discord/Slack webhook
 `once` / `watch` send notify automatically when enabled. Disable per-run with `--no-notify`.
 Payload includes puzzle id, address, engine, audit/transfer status only.
 
+## Restricted network (no Discord/Telegram)
+
+The hunt VPS often cannot POST to Discord or Telegram. Put a hop it *can*
+reach in `RELAY_URL`, and seal the solution to a key that never leaves home:
+
+```bash
+# home
+btc-puzzle-lab relay-keygen
+
+# VPS
+btc-puzzle-lab config --dest <addr> --relay https://sctapi.ftqq.com/<key>.send \
+  --relay-seal-pubkey <hex>
+btc-puzzle-lab start 71
+
+# home
+btc-puzzle-lab unseal --show-key bpl1....
+```
+
+The hop sees ciphertext only. Failed POSTs land in `state/relay_outbox.jsonl`;
+retry with `btc-puzzle-lab relay-flush`. Plaintext keys are never written there.
+
 ## Long GPU runs
 
 External solvers now stream redacted logs (no full stdout buffering) and honor

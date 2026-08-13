@@ -31,6 +31,12 @@ from btc_puzzle_lab.loop import (
     run_watch,
 )
 from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
+from btc_puzzle_lab.relay import (
+    flush_outbox,
+    generate_relay_keypair,
+    unseal_hit,
+    write_relay_secret,
+)
 from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
 from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
 from btc_puzzle_lab.start import (
@@ -101,13 +107,15 @@ def _print_transfer(result: TransferResult) -> None:
 def cmd_config(args: argparse.Namespace) -> int:
     changing = any(
         getattr(args, name) is not None
-        for name in ("dest", "notify", "telegram_token", "telegram_chat")
+        for name in ("dest", "notify", "telegram_token", "telegram_chat", "relay", "relay_seal_pubkey")
     )
     cfg = merge_operator_config(
         dest_addr=args.dest,
         webhook_url=args.notify,
         telegram_bot_token=args.telegram_token,
         telegram_chat_id=args.telegram_chat,
+        relay_url=args.relay,
+        relay_seal_pubkey=args.relay_seal_pubkey,
     )
     if changing:
         errors = config_field_errors(cfg)
@@ -135,6 +143,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         webhook_url=args.notify,
         telegram_bot_token=args.telegram_token,
         telegram_chat_id=args.telegram_chat,
+        relay_url=args.relay,
+        relay_seal_pubkey=args.relay_seal_pubkey,
         puzzle_id=puzzle,
         live=True if args.live else None,
     )
@@ -143,8 +153,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("error: " + "\n".join(errors), file=sys.stderr)
         print(
             "\n"
-            "set dest + notify once, then pass a puzzle id:\n"
+            "set dest + a reachable alert once, then pass a puzzle id:\n"
             "  btc-puzzle-lab config --dest <btc-address> --notify https://...\n"
+            "  btc-puzzle-lab config --dest <btc-address> --relay https://... "
+            "--relay-seal-pubkey <hex>\n"
             "  btc-puzzle-lab start 71",
             file=sys.stderr,
         )
@@ -193,6 +205,56 @@ def cmd_start(args: argparse.Namespace) -> int:
     for item in result.transfers:
         _print_transfer(item)
     return 0 if result.ok else 1
+
+
+def cmd_relay_keygen(_: argparse.Namespace) -> int:
+    secret, pubkey = generate_relay_keypair()
+    path = write_relay_secret(secret)
+    print(f"wrote secret : {path} (mode 0600; keep this machine only)")
+    print(f"pubkey       : {pubkey}")
+    print("on the VPS:")
+    print(
+        "  btc-puzzle-lab config --relay <reachable-url> "
+        f"--relay-seal-pubkey {pubkey}"
+    )
+    return 0
+
+
+def cmd_unseal(args: argparse.Namespace) -> int:
+    raw = args.token
+    if args.file:
+        raw = Path(args.file).read_text(encoding="utf-8")
+    if not raw:
+        print("error: pass a bpl1. token or --file", file=sys.stderr)
+        return 2
+    try:
+        hit = unseal_hit(raw)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"puzzle  : #{hit.puzzle_id}")
+    print(f"address : {hit.address}")
+    if hit.engine:
+        print(f"engine  : {hit.engine}")
+    if args.show_key:
+        print(f"key     : {hit.private_key_hex}")
+    else:
+        print("key     : (pass --show-key to print)")
+    return 0
+
+
+def cmd_relay_flush(_: argparse.Namespace) -> int:
+    results = flush_outbox()
+    if not results:
+        print("relay outbox: nothing pending")
+        return 0
+    fails = 0
+    for item in results:
+        mark = "ok" if item.ok else "fail"
+        print(f"relay[{mark}]: {item.message}")
+        if not item.ok:
+            fails += 1
+    return 1 if fails else 0
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -679,7 +741,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Telegram chat id",
     )
+    p_config.add_argument(
+        "--relay",
+        default=None,
+        help="reachable hit hop when Discord/Telegram are blocked (Server酱/ntfy/https)",
+    )
+    p_config.add_argument(
+        "--relay-seal-pubkey",
+        default=None,
+        help="X25519 pubkey hex from `relay-keygen` (seals the solution)",
+    )
     p_config.set_defaults(func=cmd_config)
+
+    p_keygen = sub.add_parser(
+        "relay-keygen",
+        help="create a seal keypair at home; copy only the pubkey to the VPS",
+    )
+    p_keygen.set_defaults(func=cmd_relay_keygen)
+
+    p_unseal = sub.add_parser(
+        "unseal",
+        help="decrypt a sealed solution (prints the key only with --show-key)",
+    )
+    p_unseal.add_argument("token", nargs="?", help="bpl1. token, or a pasted relay message")
+    p_unseal.add_argument("--file", default=None, help="read the token from a file")
+    p_unseal.add_argument(
+        "--show-key",
+        action="store_true",
+        help="print the recovered private key",
+    )
+    p_unseal.set_defaults(func=cmd_unseal)
+
+    p_flush = sub.add_parser(
+        "relay-flush",
+        help="retry undelivered relay outbox rows",
+    )
+    p_flush.set_defaults(func=cmd_relay_flush)
 
     p_start = sub.add_parser(
         "start",
@@ -712,6 +809,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_start.add_argument("--telegram-token", default=None)
     p_start.add_argument("--telegram-chat", default=None)
+    p_start.add_argument(
+        "--relay",
+        default=None,
+        help="reachable hit hop (otherwise RELAY_URL in config/.env)",
+    )
+    p_start.add_argument(
+        "--relay-seal-pubkey",
+        default=None,
+        help="X25519 pubkey hex that can unseal the solution",
+    )
     p_start.add_argument(
         "--live",
         action="store_true",

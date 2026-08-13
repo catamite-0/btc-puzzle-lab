@@ -18,6 +18,7 @@ from btc_puzzle_lab.doctor import doctor_ok, run_doctor
 from btc_puzzle_lab.engines import resolve_binary
 from btc_puzzle_lab.loop import LoopResult, WatchResult, run_once, run_watch
 from btc_puzzle_lab.paths import ENV_EXAMPLE_FILE, ENV_FILE, workspace_root
+from btc_puzzle_lab.relay import is_seal_pubkey
 from btc_puzzle_lab.settings import (
     LIVE_CONFIRM_PHRASE,
     get_notify_settings,
@@ -52,6 +53,8 @@ class OperatorConfig:
     webhook_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    relay_url: str = ""
+    relay_seal_pubkey: str = ""
     puzzle_id: int | None = None
     live: bool = False
 
@@ -60,6 +63,14 @@ class OperatorConfig:
         if self.webhook_url.strip():
             return True
         return bool(self.telegram_bot_token.strip() and self.telegram_chat_id.strip())
+
+    @property
+    def relay_configured(self) -> bool:
+        return bool(self.relay_url.strip())
+
+    @property
+    def alert_configured(self) -> bool:
+        return self.notify_configured or self.relay_configured
 
 
 @dataclass
@@ -134,6 +145,8 @@ def load_operator_config() -> OperatorConfig:
         webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
         telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
+        relay_url=os.getenv("RELAY_URL", "").strip(),
+        relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
         puzzle_id=puzzle_id,
         live=live,
     )
@@ -146,6 +159,8 @@ def merge_operator_config(
     webhook_url: str | None = None,
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
+    relay_url: str | None = None,
+    relay_seal_pubkey: str | None = None,
     puzzle_id: int | None = None,
     live: bool | None = None,
 ) -> OperatorConfig:
@@ -158,6 +173,10 @@ def merge_operator_config(
         ).strip(),
         telegram_chat_id=(
             telegram_chat_id if telegram_chat_id is not None else cfg.telegram_chat_id
+        ).strip(),
+        relay_url=(relay_url if relay_url is not None else cfg.relay_url).strip(),
+        relay_seal_pubkey=(
+            relay_seal_pubkey if relay_seal_pubkey is not None else cfg.relay_seal_pubkey
         ).strip(),
         puzzle_id=puzzle_id if puzzle_id is not None else cfg.puzzle_id,
         live=cfg.live if live is None else live,
@@ -177,6 +196,14 @@ def config_field_errors(cfg: OperatorConfig) -> list[str]:
         errors.append("--telegram-token set but --telegram-chat is empty")
     if cfg.telegram_chat_id and not cfg.telegram_bot_token:
         errors.append("--telegram-chat set but --telegram-token is empty")
+    if cfg.relay_url:
+        parsed = cfg.relay_url.lower()
+        if not (parsed.startswith("https://") or parsed.startswith("http://")):
+            errors.append("--relay / RELAY_URL must be an http(s) URL")
+    if cfg.relay_seal_pubkey and not is_seal_pubkey(cfg.relay_seal_pubkey):
+        errors.append("--relay-seal-pubkey / RELAY_SEAL_PUBKEY must be 32-byte hex")
+    if cfg.relay_seal_pubkey and not cfg.relay_url:
+        errors.append("relay seal pubkey set but --relay URL is empty")
     if cfg.puzzle_id is not None and cfg.puzzle_id < 1:
         errors.append("puzzle id must be >= 1")
     return errors
@@ -186,10 +213,10 @@ def operator_errors(cfg: OperatorConfig, *, require_puzzle: bool = False) -> lis
     errors = config_field_errors(cfg)
     if not cfg.dest_addr:
         errors.append("set a sweep address with: btc-puzzle-lab config --dest <btc-address>")
-    if not cfg.notify_configured:
+    if not cfg.alert_configured:
         errors.append(
             "set notify with: btc-puzzle-lab config --notify <https-url> "
-            "(or --telegram-token and --telegram-chat)"
+            "(or --relay <reachable-url> when Discord/Telegram are blocked)"
         )
     if require_puzzle and cfg.puzzle_id is None:
         errors.append("pass a puzzle id: btc-puzzle-lab start 71")
@@ -216,8 +243,12 @@ def persist_operator_config(cfg: OperatorConfig) -> Path:
         updates["NOTIFY_TELEGRAM_BOT_TOKEN"] = cfg.telegram_bot_token
     if cfg.telegram_chat_id:
         updates["NOTIFY_TELEGRAM_CHAT_ID"] = cfg.telegram_chat_id
-    if cfg.notify_configured:
+    if cfg.notify_configured or cfg.relay_configured:
         updates["NOTIFY_ENABLED"] = "true"
+    if cfg.relay_url:
+        updates["RELAY_URL"] = cfg.relay_url
+    if cfg.relay_seal_pubkey:
+        updates["RELAY_SEAL_PUBKEY"] = cfg.relay_seal_pubkey
     if cfg.puzzle_id is not None:
         updates[PUZZLE_ENV] = str(cfg.puzzle_id)
     target = Path(ENV_FILE)
@@ -233,7 +264,13 @@ def format_operator_config(cfg: OperatorConfig | None = None) -> str:
         channels.append("webhook")
     if item.telegram_bot_token and item.telegram_chat_id:
         channels.append("telegram")
+    if item.relay_url:
+        channels.append("relay+seal" if item.relay_seal_pubkey else "relay")
     ch = ",".join(channels) if channels else "(none)"
+    if item.relay_url:
+        relay = "url + seal" if item.relay_seal_pubkey else "url (alert only)"
+    else:
+        relay = "(unset)"
     dest = item.dest_addr or "(unset)"
     puzzle = f"#{item.puzzle_id}" if item.puzzle_id is not None else "(unset)"
     transfer = "live broadcast" if item.live else "dry-run on hit"
@@ -241,6 +278,7 @@ def format_operator_config(cfg: OperatorConfig | None = None) -> str:
         [
             f"dest       : {dest}",
             f"notify     : {ch}",
+            f"relay      : {relay}",
             f"puzzle     : {puzzle}  (last start; override with start <id>)",
             f"transfer   : {transfer}",
             f"env        : {ENV_FILE}",
@@ -472,6 +510,8 @@ def format_start_prep(prep: StartPrep, *, watch: bool = True) -> str:
         channels.append("webhook")
     if prep.config.telegram_bot_token and prep.config.telegram_chat_id:
         channels.append("telegram")
+    if prep.config.relay_url:
+        channels.append("relay+seal" if prep.config.relay_seal_pubkey else "relay")
     lines = [
         f"workspace  : {workspace_root()}",
         f"dest       : {prep.config.dest_addr}",
