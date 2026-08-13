@@ -11,6 +11,7 @@ from btc_puzzle_lab.paths import ENV_FILE, REPO_ROOT
 
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
+MIN_RELAY_TOKEN_LEN = 16
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -55,17 +56,23 @@ class NotifySettings:
     webhook_url: str
     telegram_bot_token: str
     telegram_chat_id: str
-    relay_url: str = ""
-    relay_seal_pubkey: str = ""
-    relay_token: str = ""
 
     @property
     def configured(self) -> bool:
         if self.webhook_url:
             return True
-        if self.relay_url:
-            return True
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+
+@dataclass(frozen=True)
+class RelaySettings:
+    url: str
+    seal_pubkey: str
+    token: str
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url)
 
 
 def load_dotenv_files() -> None:
@@ -130,33 +137,25 @@ def get_notify_settings() -> NotifySettings:
         webhook_url=os.getenv("NOTIFY_WEBHOOK_URL", "").strip(),
         telegram_bot_token=os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("NOTIFY_TELEGRAM_CHAT_ID", "").strip(),
-        relay_url=os.getenv("RELAY_URL", "").strip(),
-        relay_seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
-        relay_token=os.getenv("RELAY_TOKEN", "").strip(),
+    )
+
+
+def get_relay_settings() -> RelaySettings:
+    load_dotenv_files()
+    return RelaySettings(
+        url=os.getenv("RELAY_URL", "").strip(),
+        seal_pubkey=os.getenv("RELAY_SEAL_PUBKEY", "").strip(),
+        token=os.getenv("RELAY_TOKEN", "").strip(),
     )
 
 
 def validate_notify_settings(settings: NotifySettings) -> list[str]:
     errors: list[str] = []
-    if settings.relay_url:
-        parsed = settings.relay_url.lower()
-        if not (parsed.startswith("https://") or parsed.startswith("http://")):
-            errors.append("RELAY_URL must be an http(s) URL")
-        if settings.relay_seal_pubkey:
-            from btc_puzzle_lab.relay import is_seal_pubkey
-
-            if not is_seal_pubkey(settings.relay_seal_pubkey):
-                errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
-        if settings.relay_token and len(settings.relay_token) < 16:
-            errors.append("RELAY_TOKEN must be at least 16 characters")
-    elif settings.relay_seal_pubkey:
-        errors.append("RELAY_SEAL_PUBKEY set but RELAY_URL is empty")
     if not settings.enabled:
         return errors
     if not settings.configured:
         errors.append(
-            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL, Telegram, "
-            "nor RELAY_URL is set"
+            "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL nor Telegram is set"
         )
     if settings.webhook_url:
         parsed = settings.webhook_url.lower()
@@ -169,6 +168,27 @@ def validate_notify_settings(settings: NotifySettings) -> list[str]:
     return errors
 
 
+def validate_relay_settings(settings: RelaySettings) -> list[str]:
+    errors: list[str] = []
+    if settings.url:
+        parsed = settings.url.lower()
+        if not (parsed.startswith("https://") or parsed.startswith("http://")):
+            errors.append("RELAY_URL must be an http(s) URL")
+        if settings.seal_pubkey:
+            from btc_puzzle_lab.relay import is_seal_pubkey
+
+            if not is_seal_pubkey(settings.seal_pubkey):
+                errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
+        if len(settings.token) < MIN_RELAY_TOKEN_LEN:
+            errors.append(
+                "RELAY_URL is set but RELAY_TOKEN is missing or too short "
+                f"(need {MIN_RELAY_TOKEN_LEN}+ chars)"
+            )
+    elif settings.seal_pubkey:
+        errors.append("RELAY_SEAL_PUBKEY set but RELAY_URL is empty")
+    return errors
+
+
 def format_notify_policy(settings: NotifySettings | None = None) -> str:
     cfg = settings or get_notify_settings()
     channels: list[str] = []
@@ -176,11 +196,17 @@ def format_notify_policy(settings: NotifySettings | None = None) -> str:
         channels.append("webhook")
     if cfg.telegram_bot_token and cfg.telegram_chat_id:
         channels.append("telegram")
-    if cfg.relay_url:
-        channels.append("relay+seal" if cfg.relay_seal_pubkey else "relay")
     ch = ",".join(channels) if channels else "(none)"
-    token = "set" if cfg.relay_token else "unset"
-    return f"enabled={cfg.enabled} channels={ch} relay_token={token}"
+    return f"enabled={cfg.enabled} channels={ch}"
+
+
+def format_relay_policy(settings: RelaySettings | None = None) -> str:
+    cfg = settings or get_relay_settings()
+    if not cfg.url:
+        return "unset"
+    seal = "seal" if cfg.seal_pubkey else "plain"
+    token = "token=set" if cfg.token else "token=unset"
+    return f"{seal} {token}"
 
 
 def ensure_config_dir() -> Path:
@@ -323,18 +349,36 @@ def bootstrap_config(
         values["RELAY_SEAL_PUBKEY"] = relay_seal_pubkey
     if relay_token is not None:
         relay_token = relay_token.strip()
-        if len(relay_token) < 16:
-            raise ValueError("RELAY_TOKEN must be at least 16 characters")
+        if len(relay_token) < MIN_RELAY_TOKEN_LEN:
+            raise ValueError(
+                f"RELAY_TOKEN must be at least {MIN_RELAY_TOKEN_LEN} characters"
+            )
         values["RELAY_TOKEN"] = relay_token
 
     effective_relay = values.get("RELAY_URL") or os.getenv("RELAY_URL", "").strip()
     effective_pub = values.get("RELAY_SEAL_PUBKEY") or os.getenv("RELAY_SEAL_PUBKEY", "").strip()
+    effective_token = values.get("RELAY_TOKEN") or os.getenv("RELAY_TOKEN", "").strip()
+    effective_dest = (
+        values.get("AUTO_TRANSFER_DEST_ADDR")
+        or os.getenv("AUTO_TRANSFER_DEST_ADDR", "").strip()
+    )
     if effective_relay and not effective_pub:
         raise ValueError(
             "--relay needs --relay-seal-pubkey from `relay-keygen` on the control VPS"
         )
     if effective_pub and not effective_relay:
         raise ValueError("relay seal pubkey set but --relay URL is empty")
+    if effective_relay and len(effective_token) < MIN_RELAY_TOKEN_LEN:
+        raise ValueError(
+            "--relay needs --relay-token "
+            f"({MIN_RELAY_TOKEN_LEN}+ chars); on the control VPS: "
+            "btc-puzzle-lab config --new-relay-token"
+        )
+    if effective_dest and effective_relay:
+        raise ValueError(
+            "dest and --relay cannot both be set: dest belongs on the control "
+            "VPS (hub), RELAY_URL on hunt boxes. Dual dest+relay can sweep twice"
+        )
 
     if not values:
         return ConfigUpdate(

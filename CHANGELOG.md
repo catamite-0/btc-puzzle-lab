@@ -9,6 +9,21 @@ All notable changes to this project are documented here.
   always-on host runs `hub` to unseal, notify, and sweep (`RELAY_TOKEN`,
   `relay-keygen`). Dest stays on the hub, not on hunt machines.
 
+### Fixed
+- Kangaroo `dp` default is 30 for `plan` / `batch` / `once` / `run --auto`,
+  not only for `auto`. The old tier knobs (14/16/18) still OOM a container in
+  hours; `auto` had already pinned 30, the inventory-aware planner had not.
+- `dest` and `--relay` cannot be set on the same box: that is the dual-sweep
+  footgun (hunt dest + hub dest + live). Hunt `auto --relay` also skips the
+  local sweep even if dest leaked into `.env`.
+- `--relay` now requires `--relay-token` up front instead of 401-retrying the
+  outbox after a hit.
+- Chat notify and sealed relay are separate: `notify_hit` is Discord/Telegram
+  only; hunt posts `RELAY_URL` from the search loop even with `--no-notify`.
+  Hub ingest no longer needs `skip_relay`.
+- `run` / `run_puzzle` default kangaroo `dp` is 30 (was 16).
+- `doctor` gpu_solver accepts RCKangaroo, not only BitCrack.
+
 ## [0.6.0] — 2026-08-13
 
 Out-of-the-box single-target automation, plus Taproot payout addresses.

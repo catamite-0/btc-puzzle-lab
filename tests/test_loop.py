@@ -223,6 +223,42 @@ def test_run_watch_stops_on_hit(tmp_path, monkeypatch):
     assert result.passes == 1
 
 
+def test_relay_posts_even_when_notify_is_off(tmp_path, monkeypatch):
+    from btc_puzzle_lab.relay import RelayResult
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    monkeypatch.setenv("RELAY_URL", "https://control.example:8787/hit")
+    monkeypatch.setenv("RELAY_SEAL_PUBKEY", "ab" * 32)
+    monkeypatch.setenv("RELAY_TOKEN", "control-hub-token-1")
+    posted: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.deliver_relay",
+        lambda hit, **kw: (
+            posted.append(hit.puzzle_id),
+            RelayResult(True, "stub"),
+        )[1],
+    )
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_once(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=True,
+        transfer=False,
+        notify=False,
+        progress=False,
+        host=host,
+    )
+    assert result.batch is not None and result.batch.hits == 1
+    assert posted == [1]
+    assert any(n.channel == "relay" for n in result.notifications)
+
+
 def test_cli_once_idle_gpu_without_ready_jobs(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()

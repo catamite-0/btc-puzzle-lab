@@ -10,7 +10,7 @@ import json
 import os
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs
@@ -21,13 +21,13 @@ from btc_puzzle_lab.notify import NotifyResult, notify_hit
 from btc_puzzle_lab.relay import extract_seal_token, load_relay_secret, unseal_hit
 from btc_puzzle_lab.runlog import log_event
 from btc_puzzle_lab.settings import (
+    MIN_RELAY_TOKEN_LEN,
     get_transfer_settings,
     load_dotenv_files,
     validate_transfer_settings,
 )
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit
 
-MIN_RELAY_TOKEN_LEN = 16
 MAX_BODY_BYTES = 1_000_000
 DEFAULT_HUB_HOST = "0.0.0.0"
 DEFAULT_HUB_PORT = 8787
@@ -183,14 +183,7 @@ def ingest_sealed_hit(
     )
     audit: AuditResult = verify_hit(hit)
     audit_ok = bool(audit.address_ok and not audit.error)
-    hit = Hit(
-        puzzle_id=hit.puzzle_id,
-        address=hit.address,
-        private_key_hex=hit.private_key_hex,
-        engine=hit.engine,
-        found_at=hit.found_at,
-        verified=audit_ok,
-    )
+    hit = replace(hit, verified=audit_ok)
     recorded = append_hit(hit)
     if recorded.duplicate:
         log_event(
@@ -220,7 +213,7 @@ def ingest_sealed_hit(
 
     if notify:
         sender = notify_fn or notify_hit
-        sender(hit, audit=audit, transfer=transfer, skip_relay=True)
+        sender(hit, audit=audit, transfer=transfer)
 
     log_event(
         "hub_ingest",

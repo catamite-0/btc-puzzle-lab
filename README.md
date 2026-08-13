@@ -100,7 +100,7 @@ import-catalog → plan → batch → status → audit → transfer
 | `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
 | `batch` | Execute ready jobs (limit / resume / stop-on-hit) |
 | `status` | Matrix: job status × coverage × hit |
-| `run --auto` | Single-puzzle path (same adaptive strategy) |
+| `run --auto` | One-shot search using **installed** solvers (`plan_strategy`); not the `auto` command |
 
 ```bash
 btc-puzzle-lab host

@@ -7,7 +7,9 @@ sync unsolved catalog → host strategy → one resource slot → search
         → hit audit → optional sweep (dry-run / gated live)
 ```
 
-This is the product path. It is **not** the public btcpuzzle.info pool client.
+This is the catalog-wide slot loop (`plan` → one gpu/cpu job → audit → optional
+sweep). For a single unattended hunt, use `auto` ([AUTO.md](AUTO.md)). It is
+**not** the public btcpuzzle.info pool client.
 
 ## Commands
 
@@ -81,8 +83,6 @@ control hub:  auth → unseal → HITS.jsonl → audit → Discord/Telegram → 
 
 See [AUTO.md](AUTO.md) for the command split. Failed hunt POSTs retry from
 `state/relay_outbox.jsonl` (`relay-flush`). Ciphertext only.
-
-## Long GPU runs
 
 ## Long GPU runs
 

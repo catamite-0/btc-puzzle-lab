@@ -40,6 +40,7 @@ from btc_puzzle_lab.settings import (
     validate_transfer_settings,
 )
 from btc_puzzle_lab.strategy import (
+    SAFE_DP,
     adapt_recommendations,
     format_host_profile,
     plan_strategy,
@@ -234,7 +235,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         order=args.order,
         seed=args.seed,
         max_chunks=args.max_chunks,
-        dp=16 if args.dp is None else args.dp,
+        dp=SAFE_DP if args.dp is None else args.dp,
         timeout=_loop_timeout(args),
     )
     if args.auto:
@@ -697,6 +698,52 @@ def cmd_auto(args: argparse.Namespace) -> int:
     return 2 if result.failed_stage == "config" else 1
 
 
+def _add_dest_notify_relay_args(
+    parser: argparse.ArgumentParser, *, notify_short: bool = False
+) -> None:
+    """Flags shared by `auto` and `config` — dest/notify on control, relay on hunt."""
+    parser.add_argument(
+        "--dest",
+        default=None,
+        help=(
+            "payout address stored in config/.env (control VPS / standalone). "
+            "Do not set this together with --relay"
+        ),
+    )
+    notify_flags = ["--notify", "-n"] if notify_short else ["--notify"]
+    parser.add_argument(
+        *notify_flags,
+        default=None,
+        dest="notify",
+        help="alert webhook URL (Discord / Slack / ntfy / custom), stored in config/.env",
+    )
+    parser.add_argument(
+        "--telegram-token",
+        default=None,
+        help="Telegram bot token (needs --telegram-chat)",
+    )
+    parser.add_argument(
+        "--telegram-chat",
+        default=None,
+        help="Telegram chat id (needs --telegram-token)",
+    )
+    parser.add_argument(
+        "--relay",
+        default=None,
+        help="control hub URL, e.g. https://<control>:8787/hit (hunt boxes; no dest)",
+    )
+    parser.add_argument(
+        "--relay-seal-pubkey",
+        default=None,
+        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
+    )
+    parser.add_argument(
+        "--relay-token",
+        default=None,
+        help="shared bearer token for the control hub (never re-printed after write)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
@@ -720,41 +767,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_auto.add_argument("puzzle", type=int, help="puzzle id to hunt, e.g. 140")
-    p_auto.add_argument(
-        "--dest",
-        default=None,
-        help="payout address; stored in config/.env and reused by later runs",
-    )
-    p_auto.add_argument(
-        "--notify",
-        default=None,
-        help="alert webhook URL (Discord / Slack / ntfy / custom), stored in config/.env",
-    )
-    p_auto.add_argument(
-        "--telegram-token",
-        default=None,
-        help="Telegram bot token (needs --telegram-chat)",
-    )
-    p_auto.add_argument(
-        "--telegram-chat",
-        default=None,
-        help="Telegram chat id (needs --telegram-token)",
-    )
-    p_auto.add_argument(
-        "--relay",
-        default=None,
-        help="control hub URL, e.g. https://<control>:8787/hit (hunt boxes)",
-    )
-    p_auto.add_argument(
-        "--relay-seal-pubkey",
-        default=None,
-        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
-    )
-    p_auto.add_argument(
-        "--relay-token",
-        default=None,
-        help="shared bearer token for the control hub",
-    )
+    _add_dest_notify_relay_args(p_auto)
     p_auto.add_argument(
         "--live",
         action="store_true",
@@ -837,25 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
         "config",
         help="persist dest / notify / relay without starting a search",
     )
-    p_config.add_argument("--dest", default=None, help="BTC sweep address (control VPS)")
-    p_config.add_argument("--notify", "-n", default=None, help="Discord/Slack/ntfy webhook URL")
-    p_config.add_argument("--telegram-token", default=None)
-    p_config.add_argument("--telegram-chat", default=None)
-    p_config.add_argument(
-        "--relay",
-        default=None,
-        help="hunt box: POST sealed hits here (control hub /hit)",
-    )
-    p_config.add_argument(
-        "--relay-seal-pubkey",
-        default=None,
-        help="X25519 pubkey hex from `relay-keygen` on the control VPS",
-    )
-    p_config.add_argument(
-        "--relay-token",
-        default=None,
-        help="shared bearer token (never printed by config show)",
-    )
+    _add_dest_notify_relay_args(p_config, notify_short=True)
     p_config.add_argument(
         "--new-relay-token",
         action="store_true",
@@ -1016,7 +1011,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_verify.set_defaults(func=cmd_verify)
 
-    p_strategy = sub.add_parser("strategy", help="show auto strategy plan without searching")
+    p_strategy = sub.add_parser(
+        "strategy",
+        help="show inventory-aware engine plan (what can run now; not the `auto` command)",
+    )
     p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_strategy.set_defaults(func=cmd_strategy)
 
@@ -1097,7 +1095,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--auto",
         action="store_true",
-        help="pick engine/workers/coverage from host-aware strategy",
+        help=(
+            "pick engine from solvers already installed (plan_strategy). "
+            "Unattended hunt with build-if-needed is the `auto` command"
+        ),
     )
     p_run.add_argument(
         "--engine",
@@ -1121,7 +1122,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dp",
         type=int,
         default=None,
-        help="RCKangaroo DP bits (default: adaptive with --auto, else 16)",
+        help="kangaroo DP bits (default: 30; with --auto, from the strategy plan)",
     )
     p_run.add_argument(
         "--workers",
@@ -1334,7 +1335,7 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(
             "--no-notify",
             action="store_true",
-            help="skip hit webhook/Telegram notify (NOTIFY_* in config/.env)",
+            help="skip Discord/Telegram/webhook (does not skip RELAY_URL to the hub)",
         )
         parser.add_argument(
             "--no-progress",
