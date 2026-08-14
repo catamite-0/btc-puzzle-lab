@@ -104,6 +104,35 @@ def test_run_external_parses_hit(tmp_path: Path, monkeypatch):
     assert result.engine == "keyhunt"
 
 
+def test_kangaroo_cmd_passes_dp(tmp_path: Path, monkeypatch):
+    puzzle = get_puzzle(40)
+    fake = tmp_path / "kangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("KANGAROO_PATH", str(fake))
+    result = run_external_engine(puzzle, "kangaroo", threads=2, progress=False)
+    assert result.cmdline[0] == str(fake)
+    assert result.cmdline[result.cmdline.index("-d") + 1] == "30"
+
+
+def test_kangaroo_dp_clamped_to_upstream_range(tmp_path: Path, monkeypatch):
+    fake = tmp_path / "kangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("KANGAROO_PATH", str(fake))
+    result = run_external_engine(get_puzzle(40), "kangaroo", dp=8, progress=False)
+    assert result.cmdline[result.cmdline.index("-d") + 1] == "14"
+
+
+def test_rckangaroo_default_dp_is_safe(tmp_path: Path, monkeypatch):
+    fake = tmp_path / "RCKangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    result = run_external_engine(get_puzzle(40), "rckangaroo", progress=False)
+    assert result.cmdline[result.cmdline.index("-dp") + 1] == "30"
+
+
 def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):
     puzzle = get_puzzle(40)
     fake = tmp_path / "RCKangaroo"

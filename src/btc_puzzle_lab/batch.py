@@ -21,6 +21,7 @@ from btc_puzzle_lab.paths import STATE_DIR
 from btc_puzzle_lab.runlog import log_event
 from btc_puzzle_lab.search import run_puzzle
 from btc_puzzle_lab.strategy import (
+    SAFE_DP,
     HostProfile,
     StrategyPlan,
     plan_strategy,
@@ -59,7 +60,7 @@ class PuzzleJob:
     resource: str = "cpu"
     workers: int = 1
     threads: int = 2
-    dp: int = 16
+    dp: int = SAFE_DP
     coverage: bool = False
     chunk_size: int = 65_536
     order: str = "sequential"
