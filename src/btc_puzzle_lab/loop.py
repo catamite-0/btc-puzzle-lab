@@ -69,10 +69,8 @@ def resolve_resource_filter(
 ) -> Literal["cpu", "gpu", "any"]:
     if requested != "auto":
         return requested
-    # Only tier "gpu" implies a GPU path: classify_tier returns it whenever a card
-    # or a GPU solver is present, so tier "compute" means the opposite — a big CPU
-    # box with neither. Treating "compute" as a GPU host sent exactly those hosts
-    # into the "no GPU solver installed" abort below on every `once`.
+    # GPU slot follows the card (or an explicit gpu tier), never "a GPU binary
+    # happens to be installed". compute = high-CPU/no-card.
     return "gpu" if host.gpu or host.tier == "gpu" else "cpu"
 
 
