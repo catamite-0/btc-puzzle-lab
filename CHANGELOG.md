@@ -13,6 +13,14 @@ All notable changes to this project are documented here.
   `validate_relay_settings`, instead of posting an unsealable payload.
 - `watch` stops as idle when selected jobs are all prize-blocked, instead of
   spinning every few seconds.
+- Hub ingest serializes `append_hit` (thread lock + `fcntl.flock`) so two
+  concurrent POSTs cannot both pass dedupe and both sweep.
+- Public hub bind (`0.0.0.0`) requires `--tls-cert`/`--tls-key` or
+  `--allow-insecure`. Default bind is `127.0.0.1`. `RELAY_URL` / notify
+  webhooks must be `https://` except localhost.
+- `classify_tier` / `plan_strategy` follow the GPU card, not installed
+  binaries. A CPU box with RCKangaroo on disk stays on the CPU queue;
+  compute-tier hosts name keyhunt, not bitcrack.
 
 ## [0.7.0] — 2026-08-13
 
