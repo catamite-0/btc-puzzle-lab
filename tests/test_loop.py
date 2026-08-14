@@ -31,8 +31,8 @@ def test_resolve_resource_auto_prefers_gpu_on_gpu_host():
 def test_auto_resource_keeps_big_cpu_hosts_on_the_cpu_slot():
     """tier "compute" is the high-CPU/no-GPU class, not a GPU host.
 
-    classify_tier only returns "compute" when there is neither a card nor a GPU
-    solver, so routing it to the gpu queue made `once --resource auto` abort with
+    classify_tier only returns "compute" for a high-CPU host with no card,
+    so routing it to the gpu queue made `once --resource auto` abort with
     "no GPU solver is installed" on every large CPU box.
     """
     compute = HostProfile(cpus=64, mem_mb=116_000, engines=frozenset(), tier="compute")

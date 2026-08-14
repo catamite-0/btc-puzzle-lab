@@ -99,7 +99,7 @@ def run_doctor() -> list[Check]:
         )
 
     # GPU hosts should surface a missing solver before `once` burns idle hours.
-    # Tier "compute" is the high-CPU/no-GPU class, so it is not a GPU host.
+    # Tier follows the card, not installed binaries; compute is high-CPU/no-card.
     if host.gpu or host.tier == "gpu":
         found = [name for name in sorted(GPU_ENGINES) if resolve_binary(name)]
         checks.append(
