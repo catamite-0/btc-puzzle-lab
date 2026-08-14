@@ -99,6 +99,19 @@ def _hits_for_ids(puzzle_ids: set[int]) -> list[Hit]:
     return [hit for hit in read_hits() if hit.puzzle_id in puzzle_ids]
 
 
+def _watch_is_idle(result: LoopResult) -> bool:
+    """True when this pass found no work worth another claim.
+
+    ``selected_ids`` empty is the usual idle. A prize-gone (or otherwise
+    skipped) board still reports the ids that were claimed, but ``run_batch``
+    never starts a solver — treat that as idle so ``watch`` stops.
+    """
+    if not result.selected_ids:
+        return True
+    batch = result.batch
+    return batch is not None and batch.attempted == 0
+
+
 def run_once(
     *,
     sync: bool = True,
@@ -210,6 +223,10 @@ def run_once(
     }
     transfer_by_id: dict[int, TransferResult] = {}
     relay_cfg = get_relay_settings()
+    # Hunt boxes post sealed hits to the hub; the hub sweeps. Local dest+relay
+    # would sign twice if both sides are live. `auto --relay` already passes
+    # transfer=False; once/watch must apply the same gate when RELAY_URL is set.
+    local_transfer = transfer and not relay_cfg.url
     if new_hit_ids:
         for hit in _hits_for_ids(new_hit_ids):
             result: AuditResult | None = None
@@ -229,7 +246,9 @@ def run_once(
             # silently skipped the sweep as well. A failed audit still blocks it;
             # with no audit at all, sweep_hit re-derives the address from the key
             # before it signs anything, so the address↔key check is never skipped.
-            if transfer and (result is None or (result.address_ok and not result.error)):
+            if local_transfer and (
+                result is None or (result.address_ok and not result.error)
+            ):
                 tr = sweep_hit(hit)
                 transfers.append(tr)
                 transfer_by_id[hit.puzzle_id] = tr
@@ -406,7 +425,9 @@ def run_watch(
         if result.hits and stop_on_hit:
             reason = "hit"
             break
-        if not result.selected_ids:
+        # select_ready_jobs can return ids that run_batch then prize-blocks.
+        # Those still look "selected", so an empty-id check alone spun forever.
+        if _watch_is_idle(result):
             if deadline is None and max_passes is None:
                 reason = "idle"
                 break

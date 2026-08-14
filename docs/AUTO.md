@@ -141,8 +141,8 @@ btc-puzzle-lab auto 140 \
 `hub` requires `RELAY_TOKEN` (16+ chars) and `config/relay-secret`. `--relay`
 on a hunt box also requires that token up front (otherwise the hub returns 401
 and the outbox retries forever). Dest and `--relay` cannot be set together:
-that would let hunt and hub both sweep. Hunt `auto --relay` skips the local
-sweep even if a dest leaked into `.env`.
+that would let hunt and hub both sweep. Hunt `auto --relay` / `once` / `watch`
+skip the local sweep when `RELAY_URL` is set, even if a dest leaked into `.env`.
 
 Put TLS in front and firewall the port. Hub notify is chat-only (Discord /
 Telegram); it does not POST back to itself. Hunt `auto --relay` posts sealed
