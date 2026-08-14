@@ -18,6 +18,16 @@ All notable changes to this project are documented here.
   config (nothing can tell you `AUTO_TRANSFER_DEST_ADDR` is *yours* — only that
   it is well-formed), and the three arrangements for who actually sends.
 
+### Fixed
+- `once` / `watch` skip the local sweep when `RELAY_URL` is set, matching
+  `auto --relay`. Dest+relay on a leftover hunt `.env` no longer signs twice.
+- CPU JeanLuc `kangaroo` now passes distinguished-point bits (`-d`);
+  `run_external_engine` defaults to `dp=30` so RCKangaroo self-check is not 16.
+- `RELAY_URL` without a valid `RELAY_SEAL_PUBKEY` fails `doctor` (hard) and
+  `validate_relay_settings`, instead of posting an unsealable payload.
+- `watch` stops as idle when selected jobs are all prize-blocked, instead of
+  spinning every few seconds.
+
 ## [0.8.0] — 2026-08-19
 
 Bring-up stops redoing itself, and `auto` becomes the visible path.
