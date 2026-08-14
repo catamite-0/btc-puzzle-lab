@@ -351,14 +351,29 @@ def _cmd_keyhunt(binary: Path, puzzle: Puzzle, *, threads: int) -> tuple[list[st
     return cmd, tmp
 
 
-def _cmd_kangaroo(binary: Path, puzzle: Puzzle, *, threads: int) -> tuple[list[str], Path]:
+def _clamp_dp(dp: int) -> int:
+    # JeanLuc Kangaroo (-d) and RCKangaroo (-dp) both reject values outside 14..32.
+    return max(14, min(int(dp), 32))
+
+
+def _cmd_kangaroo(
+    binary: Path, puzzle: Puzzle, *, threads: int, dp: int
+) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-kg-"))
     work = tmp / "work.txt"
     work.write_text(
         f"{puzzle.range_start:x}\n{puzzle.range_end:x}\n{puzzle.pubkey_compressed_hex}\n",
         encoding="utf-8",
     )
-    cmd = [str(binary), "-t", str(max(1, threads)), str(work)]
+    # JeanLucPons/Kangaroo: -d is distinguished-point bits (not RCKangaroo's -dp).
+    cmd = [
+        str(binary),
+        "-t",
+        str(max(1, threads)),
+        "-d",
+        str(_clamp_dp(dp)),
+        str(work),
+    ]
     return cmd, tmp
 
 
@@ -376,7 +391,7 @@ def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str]
         str(binary),
         "-dp",
         # Upstream accepts 14..32; anything higher is rejected outright.
-        str(max(14, min(dp, 32))),
+        str(_clamp_dp(dp)),
         "-range",
         str(max(32, puzzle.bits - 1)),
         "-start",
@@ -441,7 +456,7 @@ def run_external_engine(
     engine: str,
     *,
     threads: int = 2,
-    dp: int = 16,
+    dp: int = 30,  # keep in sync with strategy.SAFE_DP (cannot import: cycle)
     timeout: float | None = None,
     progress: bool = True,
 ) -> ExternalEngineResult:
@@ -468,7 +483,7 @@ def run_external_engine(
     builders = {
         "keyhunt": lambda: _cmd_keyhunt(binary, puzzle, threads=threads),
         "bitcrack": lambda: _cmd_bitcrack(binary, puzzle),
-        "kangaroo": lambda: _cmd_kangaroo(binary, puzzle, threads=threads),
+        "kangaroo": lambda: _cmd_kangaroo(binary, puzzle, threads=threads, dp=dp),
         "rckangaroo": lambda: _cmd_rckangaroo(binary, puzzle, dp=dp),
     }
     cmd, cwd = builders[engine]()
