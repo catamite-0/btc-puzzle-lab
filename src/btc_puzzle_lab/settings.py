@@ -174,11 +174,13 @@ def validate_relay_settings(settings: RelaySettings) -> list[str]:
         parsed = settings.url.lower()
         if not (parsed.startswith("https://") or parsed.startswith("http://")):
             errors.append("RELAY_URL must be an http(s) URL")
-        if settings.seal_pubkey:
-            from btc_puzzle_lab.relay import is_seal_pubkey
+        from btc_puzzle_lab.relay import is_seal_pubkey
 
-            if not is_seal_pubkey(settings.seal_pubkey):
-                errors.append("RELAY_SEAL_PUBKEY must be 32-byte X25519 pubkey hex")
+        if not is_seal_pubkey(settings.seal_pubkey):
+            errors.append(
+                "RELAY_URL is set but RELAY_SEAL_PUBKEY is missing or invalid "
+                "(need 32-byte X25519 pubkey hex from `relay-keygen`)"
+            )
         if len(settings.token) < MIN_RELAY_TOKEN_LEN:
             errors.append(
                 "RELAY_URL is set but RELAY_TOKEN is missing or too short "

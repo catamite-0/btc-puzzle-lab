@@ -29,7 +29,7 @@ from btc_puzzle_lab.toolchain import (
 )
 from btc_puzzle_lab.transfer import format_transfer_policy
 
-_HARD = frozenset({"build_tools", "state_writable", "transfer_policy"})
+_HARD = frozenset({"build_tools", "state_writable", "transfer_policy", "relay_policy"})
 
 
 @dataclass(frozen=True)

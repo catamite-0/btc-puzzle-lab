@@ -66,6 +66,18 @@ def test_compute_tier_is_not_asked_for_a_gpu_solver(tmp_path, monkeypatch, build
     assert "gpu_solver" not in names
 
 
+def test_doctor_blocks_relay_url_without_pubkey(tmp_path, monkeypatch, build_deps_present):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    monkeypatch.setenv("RELAY_URL", "https://control.example:8787/hit")
+    monkeypatch.setenv("RELAY_TOKEN", "control-hub-token-1")
+    checks = run_doctor()
+    relay = next(c for c in checks if c.name == "relay_policy")
+    assert not relay.ok
+    assert "RELAY_SEAL_PUBKEY" in relay.detail
+    assert not doctor_ok(checks)
+
+
 def test_gpu_solver_accepts_rckangaroo(tmp_path, monkeypatch, build_deps_present):
     from btc_puzzle_lab.strategy import HostProfile
 
