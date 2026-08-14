@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -29,8 +31,9 @@ from btc_puzzle_lab.settings import (
 from btc_puzzle_lab.transfer import TransferResult, sweep_hit
 
 MAX_BODY_BYTES = 1_000_000
-DEFAULT_HUB_HOST = "0.0.0.0"
+DEFAULT_HUB_HOST = "127.0.0.1"
 DEFAULT_HUB_PORT = 8787
+PUBLIC_BIND_HOSTS = frozenset({"0.0.0.0", "::", "[::]"})
 
 _SEAL_KEYS = ("sealed", "token")
 _TEXT_KEYS = ("message", "body", "desp", "content", "text", "alert")
@@ -344,6 +347,38 @@ class HubHandler(BaseHTTPRequestHandler):
         self._json(code, result.as_public_dict())
 
 
+def validate_hub_bind(
+    host: str,
+    *,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
+    allow_insecure: bool = False,
+) -> None:
+    """Public binds need process TLS or an explicit plaintext opt-in."""
+    cert = (tls_cert or "").strip()
+    key = (tls_key or "").strip()
+    if bool(cert) != bool(key):
+        raise ValueError("--tls-cert and --tls-key must be set together")
+    if cert:
+        if not Path(cert).is_file():
+            raise ValueError(f"TLS cert not found: {cert}")
+        if not Path(key).is_file():
+            raise ValueError(f"TLS key not found: {key}")
+        return
+    if host in PUBLIC_BIND_HOSTS and not allow_insecure:
+        raise ValueError(
+            "public bind (0.0.0.0) requires --tls-cert/--tls-key or "
+            "--allow-insecure (prefer: bind 127.0.0.1 behind caddy/nginx)"
+        )
+
+
+def apply_hub_tls(httpd: HubHTTPServer, cert: str, key: str) -> None:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(certfile=cert, keyfile=key)
+    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+
+
 def make_hub_server(
     addr: tuple[str, int],
     *,
@@ -363,15 +398,25 @@ def serve_hub(
     port: int = DEFAULT_HUB_PORT,
     sweep: bool = True,
     notify: bool = True,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
+    allow_insecure: bool = False,
 ) -> None:
+    validate_hub_bind(
+        host, tls_cert=tls_cert, tls_key=tls_key, allow_insecure=allow_insecure
+    )
     token = hub_preflight(sweep=sweep)
     httpd = make_hub_server((host, port), relay_token=token, sweep=sweep, notify=notify)
+    scheme = "http"
+    if tls_cert:
+        apply_hub_tls(httpd, tls_cert.strip(), (tls_key or "").strip())
+        scheme = "https"
     bound_host, bound_port = httpd.server_address
-    print(f"hub listening on http://{bound_host}:{bound_port}/hit")
+    print(f"hub listening on {scheme}://{bound_host}:{bound_port}/hit")
     print("POST sealed JSON with Authorization: Bearer <RELAY_TOKEN>")
     print("GET  /health")
-    if host in {"0.0.0.0", "::", "[::]"}:
-        print("bind is public; put TLS (caddy/nginx) in front and firewall the port")
+    if host in PUBLIC_BIND_HOSTS and scheme == "http":
+        print("plaintext public bind; put TLS (caddy/nginx) in front and firewall the port")
     try:
         httpd.serve_forever()
     finally:

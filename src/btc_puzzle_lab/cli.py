@@ -132,7 +132,8 @@ def cmd_relay_keygen(_: argparse.Namespace) -> int:
     print("on this control VPS:")
     print("  btc-puzzle-lab config --dest <btc-address> --notify https://...")
     print("  btc-puzzle-lab config --new-relay-token")
-    print("  btc-puzzle-lab hub --host 0.0.0.0 --port 8787")
+    print("  btc-puzzle-lab hub --host 127.0.0.1 --port 8787")
+    print("  # public: --tls-cert/--tls-key, or --host 0.0.0.0 --allow-insecure behind caddy")
     print("on each hunt VPS (no relay-secret, dest stays on the hub):")
     print(
         "  btc-puzzle-lab auto 140 --relay https://<control>:8787/hit "
@@ -185,6 +186,9 @@ def cmd_hub(args: argparse.Namespace) -> int:
             port=args.port,
             sweep=not args.no_sweep,
             notify=not args.no_notify,
+            tls_cert=args.tls_cert,
+            tls_key=args.tls_key,
+            allow_insecure=args.allow_insecure,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -889,10 +893,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_hub.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="bind address (default 0.0.0.0; put TLS/firewall in front)",
+        default="127.0.0.1",
+        help="bind address (default 127.0.0.1; public bind needs TLS or --allow-insecure)",
     )
     p_hub.add_argument("--port", type=int, default=8787, help="listen port (default 8787)")
+    p_hub.add_argument(
+        "--tls-cert",
+        default=None,
+        help="PEM certificate for process TLS (use with --tls-key)",
+    )
+    p_hub.add_argument(
+        "--tls-key",
+        default=None,
+        help="PEM private key for process TLS (use with --tls-cert)",
+    )
+    p_hub.add_argument(
+        "--allow-insecure",
+        action="store_true",
+        help="allow 0.0.0.0 without process TLS (put caddy/nginx in front)",
+    )
     p_hub.add_argument(
         "--no-sweep",
         action="store_true",

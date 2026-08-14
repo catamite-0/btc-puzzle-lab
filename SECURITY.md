@@ -38,8 +38,10 @@ The control VPS (`hub`) holds `config/relay-secret` and the sweep dest. Hunt
 boxes get only `RELAY_SEAL_PUBKEY` plus a shared `RELAY_TOKEN` (bearer auth).
 Relay payloads, outbox rows, hub HTTP responses, and webhook/Telegram bodies
 must never contain a plaintext private key. `unseal` prints the key only with
-`--show-key`. Do not set `RELAY_URL` on the hub host. Bind `hub` behind TLS
-and a firewall.
+`--show-key`. Do not set `RELAY_URL` on the hub host. Bind `hub` on
+`127.0.0.1` behind caddy/nginx, or pass `--tls-cert`/`--tls-key`. A public
+plaintext bind requires `--allow-insecure`. `RELAY_URL` must be `https://`
+except for localhost.
 
 Host overrides (`BTC_PUZZLE_LAB_CPUS` / `_MEM_MB` / `_GPU`) affect strategy knobs
 only; they are not credentials.
