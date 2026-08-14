@@ -99,19 +99,6 @@ def _hits_for_ids(puzzle_ids: set[int]) -> list[Hit]:
     return [hit for hit in read_hits() if hit.puzzle_id in puzzle_ids]
 
 
-def _watch_is_idle(result: LoopResult) -> bool:
-    """True when this pass found no work worth another claim.
-
-    ``selected_ids`` empty is the usual idle. A prize-gone (or otherwise
-    skipped) board still reports the ids that were claimed, but ``run_batch``
-    never starts a solver — treat that as idle so ``watch`` stops.
-    """
-    if not result.selected_ids:
-        return True
-    batch = result.batch
-    return batch is not None and batch.attempted == 0
-
-
 def run_once(
     *,
     sync: bool = True,
@@ -425,14 +412,17 @@ def run_watch(
         if result.hits and stop_on_hit:
             reason = "hit"
             break
-        # select_ready_jobs can return ids that run_batch then prize-blocks.
-        # Those still look "selected", so an empty-id check alone spun forever.
-        if _watch_is_idle(result):
+        if not result.selected_ids:
             if deadline is None and max_passes is None:
                 reason = "idle"
                 break
             time.sleep(max(0.0, idle_sleep))
             continue
+        # select_ready_jobs can return ids that run_batch then prize-blocks.
+        # The prize will not come back; retrying a budgeted watch just spins.
+        if result.batch is not None and result.batch.attempted == 0:
+            reason = "idle"
+            break
         # External engine finished without a hit (or timed out): brief pause
         # then claim the same slot again unless budgets say stop.
         time.sleep(max(0.0, min(idle_sleep, 5.0)))
