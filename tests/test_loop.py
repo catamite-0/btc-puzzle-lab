@@ -223,6 +223,83 @@ def test_run_watch_stops_on_hit(tmp_path, monkeypatch):
     assert result.passes == 1
 
 
+def test_run_once_skips_local_sweep_when_relay_url_is_set(tmp_path, monkeypatch):
+    """Hunt dest + hub dest is the dual-sweep footgun; RELAY_URL wins at runtime."""
+    from btc_puzzle_lab.relay import RelayResult
+    from btc_puzzle_lab.transfer import TransferResult
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    monkeypatch.setenv("RELAY_URL", "https://control.example:8787/hit")
+    monkeypatch.setenv("RELAY_SEAL_PUBKEY", "ab" * 32)
+    monkeypatch.setenv("RELAY_TOKEN", "control-hub-token-1")
+    swept: list[int] = []
+    posted: list[int] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.sweep_hit",
+        lambda hit, **kw: (
+            swept.append(hit.puzzle_id),
+            TransferResult(status="dry_run", message="should not run"),
+        )[1],
+    )
+    monkeypatch.setattr(
+        "btc_puzzle_lab.loop.deliver_relay",
+        lambda hit, **kw: (
+            posted.append(hit.puzzle_id),
+            RelayResult(True, "stub"),
+        )[1],
+    )
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_once(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=True,
+        transfer=True,
+        notify=False,
+        progress=False,
+        host=host,
+    )
+    assert result.batch is not None and result.batch.hits == 1
+    assert swept == []
+    assert result.transfers == []
+    assert posted == [1]
+
+
+def test_run_watch_idles_when_selected_prizes_are_gone(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    monkeypatch.setattr("btc_puzzle_lab.batch.prize_is_gone", lambda puzzle, **kw: True)
+    host = HostProfile(cpus=2, mem_mb=2048, engines=frozenset())
+    result = run_watch(
+        sync=False,
+        status="all",
+        bits_min=None,
+        puzzle_ids=[1],
+        limit=1,
+        resource="cpu",
+        require_doctor=False,
+        audit=False,
+        transfer=False,
+        notify=False,
+        progress=False,
+        max_passes=3,
+        idle_sleep=0.0,
+        host=host,
+    )
+    assert result.stopped_reason == "idle"
+    assert result.passes == 1
+    assert result.hits == 0
+    assert result.last is not None
+    assert result.last.selected_ids == [1]
+    assert result.last.batch is not None
+    assert result.last.batch.attempted == 0
+
+
 def test_relay_posts_even_when_notify_is_off(tmp_path, monkeypatch):
     from btc_puzzle_lab.relay import RelayResult
 
