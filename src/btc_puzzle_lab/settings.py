@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -12,6 +13,23 @@ from btc_puzzle_lab.paths import ENV_EXAMPLE_FILE, ENV_FILE, REPO_ROOT
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
 MIN_RELAY_TOKEN_LEN = 16
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in _LOOPBACK_HOSTS
+
+
+def check_http_url(url: str, *, name: str) -> list[str]:
+    """https anywhere; http only for localhost (token must not cross a network)."""
+    parsed = url.strip()
+    lower = parsed.lower()
+    if not (lower.startswith("https://") or lower.startswith("http://")):
+        return [f"{name} must be an http(s) URL"]
+    if lower.startswith("http://") and not is_loopback_url(parsed):
+        return [f"{name} must be https:// (http is only allowed for localhost)"]
+    return []
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -158,9 +176,7 @@ def validate_notify_settings(settings: NotifySettings) -> list[str]:
             "NOTIFY_ENABLED but neither NOTIFY_WEBHOOK_URL nor Telegram is set"
         )
     if settings.webhook_url:
-        parsed = settings.webhook_url.lower()
-        if not (parsed.startswith("https://") or parsed.startswith("http://")):
-            errors.append("NOTIFY_WEBHOOK_URL must be an http(s) URL")
+        errors.extend(check_http_url(settings.webhook_url, name="NOTIFY_WEBHOOK_URL"))
     if settings.telegram_bot_token and not settings.telegram_chat_id:
         errors.append("NOTIFY_TELEGRAM_BOT_TOKEN set but NOTIFY_TELEGRAM_CHAT_ID empty")
     if settings.telegram_chat_id and not settings.telegram_bot_token:
@@ -171,9 +187,7 @@ def validate_notify_settings(settings: NotifySettings) -> list[str]:
 def validate_relay_settings(settings: RelaySettings) -> list[str]:
     errors: list[str] = []
     if settings.url:
-        parsed = settings.url.lower()
-        if not (parsed.startswith("https://") or parsed.startswith("http://")):
-            errors.append("RELAY_URL must be an http(s) URL")
+        errors.extend(check_http_url(settings.url, name="RELAY_URL"))
         from btc_puzzle_lab.relay import is_seal_pubkey
 
         if not is_seal_pubkey(settings.seal_pubkey):
@@ -340,8 +354,9 @@ def bootstrap_config(
 
     if notify_url:
         notify_url = notify_url.strip()
-        if not notify_url.lower().startswith(("http://", "https://")):
-            raise ValueError("notify URL must be an http(s) URL")
+        notify_errors = check_http_url(notify_url, name="notify URL")
+        if notify_errors:
+            raise ValueError(notify_errors[0])
         values["NOTIFY_WEBHOOK_URL"] = notify_url
         values["NOTIFY_ENABLED"] = "true"
         channels.append("webhook")
@@ -356,8 +371,9 @@ def bootstrap_config(
 
     if relay_url is not None:
         relay_url = relay_url.strip()
-        if not relay_url.lower().startswith(("http://", "https://")):
-            raise ValueError("relay URL must be an http(s) URL")
+        relay_errors = check_http_url(relay_url, name="relay URL")
+        if relay_errors:
+            raise ValueError(relay_errors[0])
         values["RELAY_URL"] = relay_url
         channels.append("relay")
     if relay_seal_pubkey is not None:

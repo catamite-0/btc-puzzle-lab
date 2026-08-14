@@ -129,7 +129,8 @@ always-on **control VPS** (unseal + notify + sweep) and point `auto` at it:
 btc-puzzle-lab relay-keygen
 btc-puzzle-lab config --dest bc1q… --notify https://discord.com/api/webhooks/...
 btc-puzzle-lab config --new-relay-token
-btc-puzzle-lab hub --host 0.0.0.0 --port 8787
+btc-puzzle-lab hub --host 127.0.0.1 --port 8787
+# public bind: --tls-cert/--tls-key, or --host 0.0.0.0 --allow-insecure behind caddy
 
 # hunt VPS — no dest, no relay-secret
 btc-puzzle-lab auto 140 \
