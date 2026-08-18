@@ -5,6 +5,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/lib-python.sh
+source "$ROOT/scripts/lib-python.sh"
+
+echo "==> python interpreter"
+PY="$(require_python)" || exit 1
+echo "    $PY ($("$PY" -V))"
 
 echo "==> apt build deps (if sudo available)"
 if command -v sudo >/dev/null 2>&1; then
@@ -16,7 +22,7 @@ else
 fi
 
 echo "==> python venv + editable install"
-python3 -m venv .venv
+"$PY" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python -m pip install -U pip

@@ -45,11 +45,15 @@ def isolated_workspace(tmp_path, monkeypatch):
       ``os.environ`` permanently. Those leaked between tests and pointed the
       engine resolver at real solver binaries, so one test silently executed a
       live search until its timeout expired.
+    - The solver cache falls back to ``~/.cache`` when a workspace has no
+      ``vendor/``. Left alone, a developer with real builds cached there would
+      see ``install_engines`` reuse them and skip the code under test.
 
     Tests that need a specific workspace still override this by setting
     ``BTC_PUZZLE_LAB_HOME`` themselves.
     """
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    monkeypatch.setenv("BTC_PUZZLE_LAB_CACHE", str(tmp_path / "cache"))
     for var in _ENGINE_PATH_VARS:
         monkeypatch.delenv(var, raising=False)
     saved = {var: os.environ.get(var) for var in _CONFIG_VARS}

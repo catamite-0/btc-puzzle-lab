@@ -23,8 +23,14 @@ def test_packaged_catalog_readable():
     assert read_puzzles_json()
 
 
-def test_packaged_env_example_present():
-    text = files("btc_puzzle_lab").joinpath("data/env.example").read_text(encoding="utf-8")
+def test_env_example_template_present():
+    """One template, in the place every doc and error message points at.
+
+    It used to be duplicated byte for byte into package data, where nothing read
+    it and nothing checked the two copies still agreed.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    text = (repo_root / "config" / ".env.example").read_text(encoding="utf-8")
     assert "AUTO_TRANSFER_ENABLED" in text
     assert "KEYHUNT_PATH" in text
 

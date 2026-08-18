@@ -63,6 +63,10 @@ btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
 
+Needs **Python 3.12+**. The bootstrap scripts check this first and name an
+interpreter to install if the host is older; `pip` alone reports it as a
+resolver error two minutes into the run.
+
 Writable `state/` and `config/` resolve in this order:
 
 1. `BTC_PUZZLE_LAB_HOME` (if set)
@@ -273,6 +277,18 @@ exact package line for your distro, instead of failing deep inside `make`.
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
 `config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
 
+`bin/` is per-workspace, but the upstream checkouts and their object files are
+shared across workspaces on the same host, so a second clone of this repo copies
+the binaries instead of recompiling them:
+
+1. `BTC_PUZZLE_LAB_CACHE` (if set) → `<cache>/vendor/`
+2. an existing workspace `vendor/` (hosts provisioned before this behaviour)
+3. `~/.cache/btc-puzzle-lab/vendor/`
+
+A build already present in that tree is reused as-is. `engines install --force`
+recompiles regardless — needed after changing a `*_COMMIT` pin, or to rebuild
+BitCrack for a different card.
+
 Upstream solvers are checked out at pinned commits so two hosts install the same
 thing; override per engine with `BTC_PUZZLE_LAB_<ENGINE>_COMMIT`.
 
@@ -291,6 +307,16 @@ btc-puzzle-lab engines install --no-selfcheck   # skip it (leaves engines unveri
 ```
 
 This runs real searches, so it is a local-only command — never wire it into CI.
+
+`auto` verifies the engine on every run, but not by re-searching every time: a
+pass is recorded in `state/selfcheck.json` against the SHA-256 of the binary that
+produced it, and a matching digest is accepted without re-running. A rebuild, a
+different commit or a swapped binary changes the digest and earns a fresh check.
+`engines selfcheck` always searches for real and refreshes that record.
+
+For the GPU engines the record is scoped to the detected compute capability too,
+so moving a workspace to a different card re-verifies rather than trusting a
+kernel that may not load on it.
 
 ```bash
 btc-puzzle-lab engines
@@ -345,7 +371,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `config/relay-secret` | Control VPS seal secret (gitignored, mode `0600`) |
 | `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
 | `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
-| `vendor/` | Cloned upstream solver sources (`engines install`, gitignored) |
+| `vendor/` | Cloned upstream solver sources + build trees (shared cache; see above) |
+| `state/selfcheck.json` | Which solver builds have passed the self-check here |
 | `bin/` | Built solver binaries (`engines install`, gitignored) |
 | `config/engines.env` | Auto-written solver paths (gitignored) |
 

@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Solver checkouts and build trees are cached per host instead of per workspace
+  (`BTC_PUZZLE_LAB_CACHE`, else `~/.cache/btc-puzzle-lab/vendor`), and a build
+  already sitting in that tree is installed as-is. A second workspace on the same
+  box copied the binaries in ~1s where it used to recompile everything. Existing
+  workspace `vendor/` directories keep being used, so provisioned hosts are
+  unaffected. `engines install --force` still rebuilds.
+- The build-dependency gate only runs when something will actually be compiled,
+  so reusing a cached build no longer demands `libgmp-dev` or an apt round-trip.
+- `auto` no longer re-solves a known puzzle on every run to verify the engine.
+  A pass is recorded in `state/selfcheck.json` against the SHA-256 of the binary
+  that produced it; a matching digest is accepted, anything else is re-checked.
+  `engines selfcheck` always runs for real and refreshes the record.
+- Kangaroo builds with `make -j`, which is a 4× wall-clock cut on a 4-core box.
+  keyhunt and BitCrack stay serial on purpose — their recipes are shell command
+  lists, so make has nothing to schedule.
+- Kangaroo and BitCrack no longer `make clean` before every build. BitCrack still
+  cleans when its Makefile is retargeted at a different CUDA toolkit or card,
+  which is the case where stale objects would actually be linked in.
+- Bootstrap scripts check for Python 3.12+ up front and name an interpreter to
+  install, instead of failing inside pip after apt and a clone. `china-bootstrap`
+  uses `.venv` like the other scripts (was `.venv-run`).
+
+### Removed
+- `src/btc_puzzle_lab/data/env.example`, a byte-identical copy of
+  `config/.env.example` that no runtime code read and no doc pointed at.
+
 ## [0.7.0] — 2026-08-13
 
 Control VPS hub on top of `auto`, plus the quality pass before deploy.

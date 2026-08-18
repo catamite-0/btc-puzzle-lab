@@ -31,6 +31,11 @@
   (+ BitCrack when `nvcc` is present) into ignored `vendor/` + `bin/` and writes
   `config/engines.env`. Never commit those build outputs. RCKangaroo stays manual.
   BitCrack makefile gets detected `COMPUTE_CAP` plus dual SASS/PTX gencode (5090/`sm_120`).
+- Build cache: `vendor/` is shared per host (`BTC_PUZZLE_LAB_CACHE`, else
+  `~/.cache/btc-puzzle-lab/vendor`); a build already there is reused rather than
+  recompiled, and `--force` is the way past it. `bin/` stays per-workspace.
+- Python 3.12+ is required (`pyproject`); bootstrap scripts preflight it through
+  `scripts/lib-python.sh` rather than letting pip fail late.
 - Machine bootstrap: `scripts/machine-bootstrap.sh` + `docs/MACHINE.md`; preflight via `doctor`.
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
