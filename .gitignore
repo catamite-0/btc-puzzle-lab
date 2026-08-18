@@ -8,6 +8,12 @@ __pycache__/
 state/
 vendor/
 bin/
+# Workspace output, not source: `import-catalog` writes data/puzzles.json, and
+# `auto` calls it on every run. Both files used to be tracked as byte-identical
+# copies of the package data under src/btc_puzzle_lab/data/, so a single `auto`
+# run left the checkout dirty. The packaged copies are the source of truth;
+# read_puzzles_json() and read_bundled_export_csv() fall back to them.
+data/
 HITS.jsonl
 *.txhex
 *.log
@@ -20,4 +26,3 @@ config/.env
 config/engines.env
 config/relay-secret
 *.egg
-.venv-run/

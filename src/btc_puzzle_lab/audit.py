@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -113,12 +113,3 @@ def export_audit_report(results: list[AuditResult], path: Path) -> Path:
     log_event("audit_export", path=str(path), hits=len(results))
     return path
 
-
-def audit_result_public_dict(result: AuditResult) -> dict:
-    row = asdict(result)
-    row.pop("hit", None)
-    row["puzzle_id"] = result.hit.puzzle_id
-    row["address"] = result.hit.address
-    row["engine"] = result.hit.engine
-    row["found_at"] = result.hit.found_at
-    return row

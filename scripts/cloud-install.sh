@@ -4,6 +4,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck source=scripts/lib-python.sh
+source ./scripts/lib-python.sh
 
 if ! python3 -c "import venv, ensurepip" 2>/dev/null; then
   if command -v sudo >/dev/null 2>&1; then
@@ -15,7 +17,8 @@ if ! python3 -c "import venv, ensurepip" 2>/dev/null; then
   fi
 fi
 
-python3 -m venv .venv-dev
+PY="$(require_python)" || exit 1
+"$PY" -m venv .venv-dev
 .venv-dev/bin/python -m pip install -U pip
 .venv-dev/bin/python -m pip install -r requirements-dev.txt
 .venv-dev/bin/python -m pip install -e .

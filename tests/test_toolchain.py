@@ -14,13 +14,17 @@ from btc_puzzle_lab.toolchain import (
     SelfCheckResult,
     _write_engines_env,
     build_gencode,
+    cached_selfcheck,
     ensure_build_deps,
     ensure_engine,
     format_install_results,
     install_engines,
     missing_build_tools,
+    needs_compile,
+    record_selfcheck,
     required_packages,
     selfcheck_engine,
+    vendor_dir,
 )
 
 
@@ -326,3 +330,167 @@ def test_ensure_engine_reports_a_failed_selfcheck_as_not_usable(tmp_path, monkey
     result = ensure_engine("keyhunt", selfcheck=True)
     assert not result.ok
     assert "self-check failed" in result.message
+
+
+# --- build cache ---------------------------------------------------------
+
+
+def _stub_checkout(monkeypatch, src_dir: Path, binary_name: str) -> Path:
+    """Stand in for `git clone`: a checkout that already holds a built binary."""
+
+    def fake_clone(repo, dest, commit=None):
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._clone_or_update", fake_clone)
+    src_dir.mkdir(parents=True, exist_ok=True)
+    binary = src_dir / binary_name
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    return binary
+
+
+def test_vendor_dir_prefers_the_explicit_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_CACHE", str(tmp_path / "shared"))
+    clear_path_cache()
+    assert vendor_dir() == tmp_path / "shared" / "vendor"
+
+
+def test_vendor_dir_keeps_using_an_existing_workspace_vendor(tmp_path, monkeypatch):
+    # Hosts provisioned before the cache moved must not silently re-clone.
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    monkeypatch.delenv("BTC_PUZZLE_LAB_CACHE", raising=False)
+    (tmp_path / "vendor").mkdir()
+    clear_path_cache()
+    assert vendor_dir() == tmp_path / "vendor"
+
+
+def test_install_reuses_a_build_left_in_the_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    monkeypatch.setenv("BTC_PUZZLE_LAB_CACHE", str(tmp_path / "shared"))
+    clear_path_cache()
+    _stub_checkout(monkeypatch, tmp_path / "shared" / "vendor" / "keyhunt", "keyhunt")
+
+    def explode(cmd, cwd=None):
+        raise AssertionError(f"should not have shelled out: {cmd}")
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._run", explode)
+
+    results = install_engines(["keyhunt"])
+    installed = next(r for r in results if r.name == "keyhunt")
+    assert installed.ok
+    assert "reused" in installed.message
+    assert (tmp_path / "bin" / "keyhunt").is_file()
+
+
+def test_reuse_does_not_demand_a_compiler(tmp_path, monkeypatch):
+    # Copying a cached binary needs no headers; the gate used to refuse anyway.
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    monkeypatch.setenv("BTC_PUZZLE_LAB_CACHE", str(tmp_path / "shared"))
+    clear_path_cache()
+    _stub_checkout(monkeypatch, tmp_path / "shared" / "vendor" / "keyhunt", "keyhunt")
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda: ["g++"])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: ["gmp.h"])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._run", lambda cmd, cwd=None: (0, ""))
+
+    assert needs_compile("keyhunt") is False
+    results = install_engines(["keyhunt"])
+    assert next(r for r in results if r.name == "keyhunt").ok
+
+
+def test_force_rebuilds_even_with_a_cached_build(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    monkeypatch.setenv("BTC_PUZZLE_LAB_CACHE", str(tmp_path / "shared"))
+    clear_path_cache()
+    src_dir = tmp_path / "shared" / "vendor" / "keyhunt"
+    _stub_checkout(monkeypatch, src_dir, "keyhunt")
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_tools", lambda: [])
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: [])
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "btc_puzzle_lab.toolchain._run",
+        lambda cmd, cwd=None: (calls.append(cmd), (0, ""))[1],
+    )
+
+    assert needs_compile("keyhunt", force=True) is True
+    results = install_engines(["keyhunt"], force=True)
+    assert next(r for r in results if r.name == "keyhunt").ok
+    assert ["make"] in calls
+
+
+# --- self-check cache ----------------------------------------------------
+
+
+def test_selfcheck_is_cached_against_the_exact_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    binary = tmp_path / "bin" / "keyhunt"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    record_selfcheck("keyhunt", binary, SelfCheckResult("keyhunt", True, 20, "solved #20", 1.5))
+    hit = cached_selfcheck("keyhunt", binary)
+    assert hit is not None and hit.ok and hit.cached
+
+    # Any change to the bytes has to earn a fresh check.
+    binary.write_text("#!/bin/sh\n# rebuilt\n", encoding="utf-8")
+    assert cached_selfcheck("keyhunt", binary) is None
+
+
+def test_gpu_selfcheck_cache_is_scoped_to_the_card(tmp_path, monkeypatch):
+    # Same binary, different compute capability: RCKangaroo would load no kernel
+    # and sit at 0 MKeys/s, which is exactly what the self-check is there to catch.
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    binary = tmp_path / "bin" / "RCKangaroo"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.detect_compute_cap", lambda: "120")
+    record_selfcheck(
+        "rckangaroo", binary, SelfCheckResult("rckangaroo", True, 40, "solved #40", 3.0)
+    )
+    assert cached_selfcheck("rckangaroo", binary) is not None
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.detect_compute_cap", lambda: "89")
+    assert cached_selfcheck("rckangaroo", binary) is None
+
+
+def test_a_failed_selfcheck_is_never_served_from_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    binary = tmp_path / "bin" / "keyhunt"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    record_selfcheck("keyhunt", binary, SelfCheckResult("keyhunt", False, 20, "no key", 1.0))
+    assert cached_selfcheck("keyhunt", binary) is None
+
+
+def test_ensure_engine_skips_a_selfcheck_it_already_passed(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    binary = tmp_path / "bin" / "keyhunt"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    record_selfcheck("keyhunt", binary, SelfCheckResult("keyhunt", True, 20, "solved #20", 1.5))
+
+    def explode(name, timeout=180.0):
+        raise AssertionError("cached pass should not re-run the search")
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.selfcheck_engine", explode)
+    result = ensure_engine("keyhunt", selfcheck=True)
+    assert result.ok
+    assert result.selfcheck is not None and result.selfcheck.cached
+
+    # Opting out of the cache puts the real check back in the path.
+    monkeypatch.setattr(
+        "btc_puzzle_lab.toolchain.selfcheck_engine",
+        lambda name, timeout=180.0: SelfCheckResult(name, True, 20, "solved #20", 0.4),
+    )
+    fresh = ensure_engine("keyhunt", selfcheck=True, use_selfcheck_cache=False)
+    assert fresh.ok
+    assert fresh.selfcheck is not None and not fresh.selfcheck.cached

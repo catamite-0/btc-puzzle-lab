@@ -49,10 +49,14 @@ fi
 cd "$WORKDIR"
 
 say "4/6  python environment"
-python3 -m venv .venv-run
-./.venv-run/bin/python -m pip install -q --upgrade pip -i "$PIP_INDEX"
-./.venv-run/bin/python -m pip install -q . -i "$PIP_INDEX"
-./.venv-run/bin/btc-puzzle-lab --version
+# shellcheck source=scripts/lib-python.sh
+source "$WORKDIR/scripts/lib-python.sh"
+PY="$(require_python)" || exit 1
+echo "  interpreter: $PY ($("$PY" -V))"
+"$PY" -m venv .venv
+./.venv/bin/python -m pip install -q --upgrade pip -i "$PIP_INDEX"
+./.venv/bin/python -m pip install -q . -i "$PIP_INDEX"
+./.venv/bin/btc-puzzle-lab --version
 
 say "5/6  building RCKangaroo (the only engine that matters here)"
 # Mirror the solver remote too; the toolchain reads these env vars.
@@ -60,12 +64,12 @@ if ! git ls-remote --exit-code https://github.com/RetiredC/RCKangaroo.git >/dev/
     echo "  github unreachable directly, switching the solver remote to the mirror"
     export BTC_PUZZLE_LAB_RCKANGAROO_REPO="${GH_MIRROR}https://github.com/RetiredC/RCKangaroo.git"
 fi
-./.venv-run/bin/btc-puzzle-lab engines install --only rckangaroo
+./.venv/bin/btc-puzzle-lab engines install --only rckangaroo
 
 say "6/6  measuring this card"
 # The self-check already ran as part of install; this is the throughput number
 # the whole rental decision turns on.
-timeout 120 ./.venv-run/bin/btc-puzzle-lab run "$TARGET" --engine rckangaroo --max-seconds 90 2>&1 \
+timeout 120 ./.venv/bin/btc-puzzle-lab run "$TARGET" --engine rckangaroo --max-seconds 90 2>&1 \
     | tr '\r' '\n' | grep -oE "Speed: [0-9]+ MKeys/s" | tail -5
 
 cat <<'EOF'
@@ -81,7 +85,7 @@ To leave it running for the rest of the rental:
 
   export BTC_PUZZLE_LAB_DP=30      # flat DP table; the default fills RAM in hours
   # This GPU box is a hunt worker. Post sealed hits to the always-on control VPS:
-  ./.venv-run/bin/btc-puzzle-lab auto 140 \
+  ./.venv/bin/btc-puzzle-lab auto 140 \
       --relay https://<control-vps>:8787/hit \
       --relay-seal-pubkey <hex> \
       --relay-token <token>

@@ -77,7 +77,11 @@ def test_plan_only_stops_before_building_or_searching(monkeypatch):
     assert result.choice.engine == "keyhunt"
     assert result.watch is None
     assert "not started" in _stage(result, "run").detail
-    assert builds == ["keyhunt"]  # provisioned, but nothing searched
+    # Nothing compiled. This used to provision the engine and only then report
+    # that it had not searched, so asking which engine a GPU box would pick cost
+    # a full nvcc build first.
+    assert builds == []
+    assert "would build" in _stage(result, "toolchain").detail
 
 
 def test_unknown_puzzle_fails_at_the_catalog_stage():
@@ -286,3 +290,39 @@ def test_cli_auto_rejects_a_bad_destination(tmp_path, monkeypatch, capsys):
     code = main(["auto", "71", "--dest", "nonsense", "--plan-only"])
     assert code == 2
     assert "not a valid BTC address" in capsys.readouterr().out
+
+
+def test_auto_honours_an_exported_engine_pin(monkeypatch):
+    """`strategy` / `run` / `plan` always read these; `auto` ignored them and then
+    overwrote them with its own choice, so `export BTC_PUZZLE_LAB_DP=30` before an
+    `auto` run — which china-bootstrap.sh instructs — quietly did nothing."""
+    monkeypatch.setattr("btc_puzzle_lab.autorun.prize_is_gone", lambda p, **k: False)
+    monkeypatch.setenv("BTC_PUZZLE_LAB_ENGINE", "kangaroo")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_DP", "24")
+
+    result = run_auto(71, host=_host(), plan_only=True)
+
+    assert result.choice.engine == "kangaroo"
+    assert result.choice.dp == 24
+    assert "BTC_PUZZLE_LAB_ENGINE" in result.choice.reason
+
+
+def test_an_explicit_argument_outranks_the_environment(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.autorun.prize_is_gone", lambda p, **k: False)
+    monkeypatch.setenv("BTC_PUZZLE_LAB_ENGINE", "kangaroo")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_DP", "24")
+
+    result = run_auto(71, host=_host(), plan_only=True, engine="keyhunt", dp=31)
+
+    assert result.choice.engine == "keyhunt"
+    assert result.choice.dp == 31
+    assert "--engine" in result.choice.reason
+
+
+def test_no_pin_still_derives_from_target_and_host(monkeypatch):
+    monkeypatch.setattr("btc_puzzle_lab.autorun.prize_is_gone", lambda p, **k: False)
+
+    result = run_auto(71, host=_host(), plan_only=True)
+
+    assert result.choice.engine == "keyhunt"
+    assert "pinned by" not in result.choice.reason

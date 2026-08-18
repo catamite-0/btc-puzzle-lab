@@ -23,10 +23,41 @@ def test_packaged_catalog_readable():
     assert read_puzzles_json()
 
 
-def test_packaged_env_example_present():
-    text = files("btc_puzzle_lab").joinpath("data/env.example").read_text(encoding="utf-8")
-    assert "AUTO_TRANSFER_ENABLED" in text
-    assert "KEYHUNT_PATH" in text
+def test_env_example_template_present():
+    packaged = files("btc_puzzle_lab").joinpath("data/env.example").read_text(encoding="utf-8")
+    assert "AUTO_TRANSFER_ENABLED" in packaged
+    assert "KEYHUNT_PATH" in packaged
+
+
+def test_env_example_copies_cannot_drift():
+    """The checkout copy is what docs point at; the packaged one is what a wheel
+    install gets from `config --write-example`. Nothing kept them in sync, so a
+    knob documented in one could silently go missing from the other."""
+    repo_root = Path(__file__).resolve().parents[1]
+    checkout = (repo_root / "config" / ".env.example").read_text(encoding="utf-8")
+    packaged = files("btc_puzzle_lab").joinpath("data/env.example").read_text(encoding="utf-8")
+    assert checkout == packaged, "config/.env.example and data/env.example diverged"
+
+
+def test_write_env_example_materialises_the_template(tmp_path, monkeypatch):
+    from btc_puzzle_lab.settings import write_env_example
+
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+
+    path, written = write_env_example()
+    assert written and path.is_file()
+    assert "AUTO_TRANSFER_DEST_ADDR" in path.read_text(encoding="utf-8")
+
+    # A second call must not clobber a template the operator has annotated.
+    path.write_text("# edited by hand\n", encoding="utf-8")
+    _, written_again = write_env_example()
+    assert not written_again
+    assert path.read_text(encoding="utf-8") == "# edited by hand\n"
+
+    _, forced = write_env_example(overwrite=True)
+    assert forced
+    assert "AUTO_TRANSFER_DEST_ADDR" in path.read_text(encoding="utf-8")
 
 
 def test_workspace_home_override(tmp_path, monkeypatch):

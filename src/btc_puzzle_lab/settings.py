@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from btc_puzzle_lab.crypto import is_valid_btc_address
-from btc_puzzle_lab.paths import ENV_FILE, REPO_ROOT
+from btc_puzzle_lab.paths import ENV_EXAMPLE_FILE, ENV_FILE, REPO_ROOT
 
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC"
 FEE_STRATEGIES = ("economy", "normal", "priority")
@@ -221,6 +221,24 @@ _ENV_HEADER = (
     "# Written by `btc-puzzle-lab auto` / `config`; hand edits are preserved.",
     "# Full option list with comments: config/.env.example",
 )
+
+
+def write_env_example(path: Path | None = None, *, overwrite: bool = False) -> tuple[Path, bool]:
+    """Drop the annotated template into ``config/.env.example``.
+
+    A wheel install has no checkout, so the file every doc and error message
+    points at simply is not there — the template ships as package data for
+    exactly this. Returns the path and whether it was written.
+    """
+    from importlib.resources import files
+
+    ensure_config_dir()
+    target = Path(path) if path is not None else Path(ENV_EXAMPLE_FILE)
+    if target.exists() and not overwrite:
+        return target, False
+    text = files("btc_puzzle_lab").joinpath("data/env.example").read_text(encoding="utf-8")
+    target.write_text(text, encoding="utf-8")
+    return target, True
 
 
 def write_env_values(values: dict[str, str], path: Path | None = None) -> Path:

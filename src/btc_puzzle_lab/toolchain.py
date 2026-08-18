@@ -9,6 +9,8 @@ source in git — only build artifacts under ignored ``vendor/`` + ``bin/``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -54,11 +56,40 @@ PINNED_COMMITS = {
 INSTALLABLE = ("keyhunt", "kangaroo", "bitcrack", "rckangaroo")
 MANUAL_ONLY: dict[str, str] = {}
 
+# Where each upstream build leaves its binary, best candidate first. Used both to
+# collect the artifact after a build and to spot one an earlier build left behind.
+KEYHUNT_BINARIES = ("keyhunt",)
+KANGAROO_BINARIES = ("kangaroo", "Kangaroo")  # JeanLucPons ships it lowercase
+BITCRACK_BINARIES = ("bin/cuBitCrack", "cuBitCrack", "bin/BitCrack")
+RCKANGAROO_BINARIES = ("build/bin/rckangaroo", "build/rckangaroo", "build/bin/RCKangaroo")
+
 ENGINE_ENV_VARS = {
     "keyhunt": "KEYHUNT_PATH",
     "kangaroo": "KANGAROO_PATH",
     "bitcrack": "BITCRACK_PATH",
     "rckangaroo": "RCKANGAROO_PATH",
+}
+
+ENGINE_SOURCE_DIRS = {
+    "keyhunt": "keyhunt",
+    "kangaroo": "Kangaroo",
+    "bitcrack": "BitCrack",
+    "rckangaroo": "RCKangaroo",
+}
+
+ENGINE_BINARIES = {
+    "keyhunt": KEYHUNT_BINARIES,
+    "kangaroo": KANGAROO_BINARIES,
+    "bitcrack": BITCRACK_BINARIES,
+    "rckangaroo": RCKANGAROO_BINARIES,
+}
+
+# Name each engine's artifact carries once it is installed under bin/.
+INSTALLED_BIN_NAMES = {
+    "keyhunt": "keyhunt",
+    "kangaroo": "kangaroo",
+    "bitcrack": "cuBitCrack",
+    "rckangaroo": "RCKangaroo",
 }
 
 
@@ -71,7 +102,32 @@ class InstallResult:
 
 
 def vendor_dir() -> Path:
-    return workspace_root() / "vendor"
+    """Where upstream checkouts and their build trees live.
+
+    Shared across workspaces on purpose. The clone and the object files are the
+    expensive part of a bring-up, and keeping them under the workspace meant a
+    second checkout of this repo on the same box recompiled every solver from
+    scratch. ``bin/`` stays per-workspace, so installs remain independent — they
+    just stop rebuilding the same pinned commit.
+
+    Order: ``BTC_PUZZLE_LAB_CACHE`` → an existing workspace ``vendor/`` (so hosts
+    provisioned before this change keep their builds) → ``~/.cache``.
+    """
+    override = os.environ.get("BTC_PUZZLE_LAB_CACHE")
+    if override:
+        return Path(override).expanduser().resolve() / "vendor"
+    legacy = workspace_root() / "vendor"
+    if legacy.is_dir():
+        return legacy
+    try:
+        xdg = os.environ.get("XDG_CACHE_HOME")
+        base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
+        shared = base / "btc-puzzle-lab" / "vendor"
+        shared.mkdir(parents=True, exist_ok=True)
+    except (OSError, RuntimeError):
+        # No writable HOME (some containers): keep everything in the workspace.
+        return legacy
+    return shared.resolve()
 
 
 def bin_dir() -> Path:
@@ -96,6 +152,61 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
 
 def _which_ok(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def _make_jobs() -> str:
+    """``-jN`` for build systems that declare real per-object rules.
+
+    Only Kangaroo and RCKangaroo qualify. keyhunt's Makefile is a single
+    ``default:`` recipe holding twenty shell commands, and BitCrack's subdirectory
+    Makefiles compile inside ``for`` loops — neither exposes anything for make to
+    schedule, so passing ``-j`` there buys nothing.
+    """
+    return f"-j{max(1, os.cpu_count() or 1)}"
+
+
+def _first_existing(src_dir: Path, relatives: Sequence[str]) -> Path | None:
+    for rel in relatives:
+        candidate = src_dir / rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _prebuilt(src_dir: Path, relatives: Sequence[str], *, force: bool) -> Path | None:
+    """A binary this host already compiled from this same checkout, if any.
+
+    keyhunt and BitCrack rebuild everything on every ``make`` — their recipes have
+    no prerequisites for make to compare — so an unconditional build costs the
+    full compile (15s and several minutes respectively) even when nothing changed.
+    The checkout is pinned to a commit, so a binary sitting in the tree was built
+    from exactly this source.
+    """
+    if force:
+        return None
+    candidate = _first_existing(src_dir, relatives)
+    if candidate is None or not os.access(candidate, os.X_OK):
+        return None
+    return candidate
+
+
+def needs_compile(name: str, *, force: bool = False) -> bool:
+    """Whether installing ``name`` would actually invoke a compiler.
+
+    Lets the caller skip the build-dependency gate — and the apt run behind it —
+    when the answer is going to be a file copy. BitCrack is the one estimate that
+    can be wrong: reuse there also depends on whether the Makefile still targets
+    this host's CUDA and card, which is only known once it has been patched.
+    """
+    if name not in INSTALLABLE:
+        return False
+    if force:
+        return True
+    installed = bin_dir() / INSTALLED_BIN_NAMES[name]
+    if installed.is_file() and os.access(installed, os.X_OK):
+        return False
+    src_dir = vendor_dir() / ENGINE_SOURCE_DIRS[name]
+    return _prebuilt(src_dir, ENGINE_BINARIES[name], force=False) is None
 
 
 def missing_build_tools(extra: Sequence[str] = ()) -> list[str]:
@@ -461,6 +572,11 @@ def install_keyhunt(*, force: bool = False) -> InstallResult:
 
     src_dir = vendor_dir() / "keyhunt"
     _clone_or_update(KEYHUNT_REPO, src_dir, PINNED_COMMITS.get("keyhunt"))
+    cached = _prebuilt(src_dir, KEYHUNT_BINARIES, force=force)
+    if cached is not None:
+        path = _install_link(cached, "keyhunt")
+        return InstallResult("keyhunt", True, path, f"reused the build in {src_dir}")
+
     code, out = _run(["make"], cwd=src_dir)
     built = src_dir / "keyhunt"
     if code != 0 or not built.is_file():
@@ -501,12 +617,17 @@ def install_kangaroo(*, force: bool = False) -> InstallResult:
     src_dir = vendor_dir() / "Kangaroo"
     _clone_or_update(KANGAROO_REPO, src_dir, PINNED_COMMITS.get("kangaroo"))
     _patch_kangaroo_sources(src_dir)
+    cached = _prebuilt(src_dir, KANGAROO_BINARIES, force=force)
+    if cached is not None:
+        path = _install_link(cached, "kangaroo")
+        return InstallResult("kangaroo", True, path, f"reused the build in {src_dir}")
+
     # CPU build (no CUDA). GPU operators can rebuild upstream with gpu=1 themselves.
-    code, out = _run(["make", "clean"], cwd=src_dir)
-    code, out = _run(["make", "all"], cwd=src_dir)
-    # JeanLucPons binary is typically lowercase kangaroo
-    candidates = [src_dir / "kangaroo", src_dir / "Kangaroo"]
-    built = next((p for p in candidates if p.is_file()), None)
+    # Upstream declares per-object rules, so this is the one build here that -j helps.
+    if force:
+        _run(["make", "clean"], cwd=src_dir)
+    code, out = _run(["make", _make_jobs(), "all"], cwd=src_dir)
+    built = _first_existing(src_dir, KANGAROO_BINARIES)
     if code != 0 or built is None:
         return InstallResult(
             "kangaroo",
@@ -518,10 +639,11 @@ def install_kangaroo(*, force: bool = False) -> InstallResult:
     return InstallResult("kangaroo", True, path, "built and installed to bin/kangaroo")
 
 
-def _patch_bitcrack_makefile(src_dir: Path, *, cuda_home: Path, compute_cap: str | None) -> None:
+def _patch_bitcrack_makefile(src_dir: Path, *, cuda_home: Path, compute_cap: str | None) -> bool:
+    """Point upstream at this host's CUDA and card. Returns True when it rewrote."""
     makefile = src_dir / "Makefile"
     if not makefile.is_file():
-        return
+        return False
     text = makefile.read_text(encoding="utf-8", errors="ignore")
     lines = text.splitlines()
     out: list[str] = []
@@ -537,7 +659,11 @@ def _patch_bitcrack_makefile(src_dir: Path, *, cuda_home: Path, compute_cap: str
         gencode = build_gencode(compute_cap)
         if not any(gencode in line for line in out):
             out.append(f"NVCCFLAGS+={gencode}")
-    makefile.write_text("\n".join(out) + "\n", encoding="utf-8")
+    patched = "\n".join(out) + "\n"
+    if patched == text:
+        return False
+    makefile.write_text(patched, encoding="utf-8")
+    return True
 
 
 def install_bitcrack(*, force: bool = False) -> InstallResult:
@@ -565,15 +691,25 @@ def install_bitcrack(*, force: bool = False) -> InstallResult:
     src_dir = vendor_dir() / "BitCrack"
     _clone_or_update(BITCRACK_REPO, src_dir, PINNED_COMMITS.get("bitcrack"))
     compute_cap = detect_compute_cap()
-    _patch_bitcrack_makefile(src_dir, cuda_home=cuda_home, compute_cap=compute_cap)
-    _run(["make", "clean"], cwd=src_dir)
+    retargeted = _patch_bitcrack_makefile(src_dir, cuda_home=cuda_home, compute_cap=compute_cap)
+
+    # Only trust an existing build when the Makefile still says what it said when
+    # that build ran: a different CUDA_HOME or COMPUTE_CAP means those objects were
+    # compiled for another toolkit or another card.
+    cached = None if retargeted else _prebuilt(src_dir, BITCRACK_BINARIES, force=force)
+    if cached is not None:
+        path = _install_link(cached, "cuBitCrack")
+        _install_link(cached, "BitCrack")
+        return InstallResult("bitcrack", True, path, f"reused the build in {src_dir}")
+
+    # Retargeting invalidates every object file, and upstream's recipes cannot see
+    # that, so the stale ones have to go. An untouched tree keeps whatever it has.
+    if force or retargeted:
+        _run(["make", "clean"], cwd=src_dir)
+    # No -j: every BitCrack subdirectory compiles inside a shell `for` loop, so
+    # make has nothing to schedule (see _make_jobs).
     code, out = _run(["make", "BUILD_CUDA=1"], cwd=src_dir)
-    candidates = [
-        src_dir / "bin" / "cuBitCrack",
-        src_dir / "cuBitCrack",
-        src_dir / "bin" / "BitCrack",
-    ]
-    built = next((p for p in candidates if p.is_file()), None)
+    built = _first_existing(src_dir, BITCRACK_BINARIES)
     if code != 0 or built is None:
         hint = f" CUDA_HOME={cuda_home}"
         if compute_cap:
@@ -621,31 +757,29 @@ def install_rckangaroo(*, force: bool = False) -> InstallResult:
 
     src_dir = vendor_dir() / "RCKangaroo"
     _clone_or_update(RCKANGAROO_REPO, src_dir, PINNED_COMMITS.get("rckangaroo"))
-    code, out = _run(
-        [
-            "cmake",
-            "-B",
-            "build",
-            "-DCMAKE_BUILD_TYPE=Release",
-            f"-DCUDAToolkit_ROOT={cuda_home}",
-        ],
-        cwd=src_dir,
-    )
-    if code != 0:
-        return InstallResult(
-            "rckangaroo", False, None, f"cmake configure failed:\n{out[-2000:]}"
+    built = _prebuilt(src_dir, RCKANGAROO_BINARIES, force=force)
+    reused = built is not None
+    if built is None:
+        code, out = _run(
+            [
+                "cmake",
+                "-B",
+                "build",
+                "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCUDAToolkit_ROOT={cuda_home}",
+            ],
+            cwd=src_dir,
         )
-    code, out = _run(["cmake", "--build", "build", "-j"], cwd=src_dir)
-    candidates = [
-        src_dir / "build" / "bin" / "rckangaroo",
-        src_dir / "build" / "rckangaroo",
-        src_dir / "build" / "bin" / "RCKangaroo",
-    ]
-    built = next((p for p in candidates if p.is_file()), None)
-    if code != 0 or built is None:
-        return InstallResult(
-            "rckangaroo", False, None, f"build failed:\n{out[-2000:]}"
-        )
+        if code != 0:
+            return InstallResult(
+                "rckangaroo", False, None, f"cmake configure failed:\n{out[-2000:]}"
+            )
+        code, out = _run(["cmake", "--build", "build", _make_jobs()], cwd=src_dir)
+        built = _first_existing(src_dir, RCKANGAROO_BINARIES)
+        if code != 0 or built is None:
+            return InstallResult(
+                "rckangaroo", False, None, f"build failed:\n{out[-2000:]}"
+            )
     path = _install_link(built, "RCKangaroo")
 
     # RCKangaroo loads kernel_sm*.cubin from its working directory; engines.py links
@@ -661,8 +795,9 @@ def install_rckangaroo(*, force: bool = False) -> InstallResult:
             "built, but no kernel_sm*.cubin found upstream — it would spin at 0 MKeys/s",
         )
     names = ", ".join(c.name for c in cubins)
+    verb = f"reused the build in {src_dir}" if reused else "built"
     return InstallResult(
-        "rckangaroo", True, path, f"built and installed to bin/RCKangaroo (kernels: {names})"
+        "rckangaroo", True, path, f"{verb} and installed to bin/RCKangaroo (kernels: {names})"
     )
 
 
@@ -673,6 +808,7 @@ class SelfCheckResult:
     puzzle_id: int | None
     message: str
     seconds: float = 0.0
+    cached: bool = False
 
 
 # Solved practice puzzles small enough to finish in seconds, chosen per engine:
@@ -684,6 +820,99 @@ SELFCHECK_PUZZLES = {
     "kangaroo": 32,
     "rckangaroo": 40,
 }
+
+
+def selfcheck_cache_path() -> Path:
+    """Per-workspace record of which binaries have passed the self-check here.
+
+    Workspace-local rather than beside the shared vendor cache: "this binary
+    solved a known puzzle" is a claim about a host, and a cache directory can be
+    shared between hosts.
+    """
+    return workspace_root() / "state" / "selfcheck.json"
+
+
+# Engines whose self-check exercises the GPU. Same binary on a different card is
+# a different question: RCKangaroo silently sits at 0 MKeys/s when no prebuilt
+# kernel matches the compute capability, which is the failure the check exists to
+# catch. CPU engines have no such second variable.
+_GPU_SELFCHECK_ENGINES = ("bitcrack", "rckangaroo")
+
+
+def _selfcheck_host_key(name: str) -> str | None:
+    if name not in _GPU_SELFCHECK_ENGINES:
+        return None
+    return detect_compute_cap()
+
+
+def _binary_fingerprint(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _load_selfcheck_cache() -> dict[str, dict]:
+    path = selfcheck_cache_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cached_selfcheck(name: str, binary: Path) -> SelfCheckResult | None:
+    """A passing self-check already recorded for this exact binary, if any.
+
+    Verification is not skipped because the engine is installed — it is skipped
+    because *this build*, byte for byte, already solved the known puzzle on this
+    host. A rebuild, a different commit or a swapped binary changes the digest and
+    earns a fresh check.
+    """
+    entry = _load_selfcheck_cache().get(name)
+    if not isinstance(entry, dict) or not entry.get("ok"):
+        return None
+    fingerprint = _binary_fingerprint(binary)
+    if fingerprint is None or entry.get("sha256") != fingerprint:
+        return None
+    if entry.get("compute_cap") != _selfcheck_host_key(name):
+        return None
+    return SelfCheckResult(
+        name=name,
+        ok=True,
+        puzzle_id=entry.get("puzzle_id"),
+        message=f"solved #{entry.get('puzzle_id')} on an earlier run (same build)",
+        seconds=float(entry.get("seconds") or 0.0),
+        cached=True,
+    )
+
+
+def record_selfcheck(name: str, binary: Path, result: SelfCheckResult) -> None:
+    fingerprint = _binary_fingerprint(binary)
+    if fingerprint is None:
+        return
+    cache = _load_selfcheck_cache()
+    cache[name] = {
+        "sha256": fingerprint,
+        "compute_cap": _selfcheck_host_key(name),
+        "ok": result.ok,
+        "puzzle_id": result.puzzle_id,
+        "seconds": round(result.seconds, 3),
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    path = selfcheck_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        # A read-only workspace only costs us the cache, never correctness.
+        pass
 
 
 def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
@@ -701,7 +930,8 @@ def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
     puzzle_id = SELFCHECK_PUZZLES.get(name)
     if puzzle_id is None:
         return SelfCheckResult(name, False, None, "no self-check defined for this engine")
-    if resolve_binary(name) is None:
+    binary = resolve_binary(name)
+    if binary is None:
         return SelfCheckResult(name, False, puzzle_id, "not installed")
     try:
         puzzle = get_puzzle(puzzle_id)
@@ -717,18 +947,21 @@ def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
     elapsed = time.monotonic() - started
 
     if result.secret is None:
-        return SelfCheckResult(
+        check = SelfCheckResult(
             name,
             False,
             puzzle_id,
             f"ran but returned no key for #{puzzle_id} ({result.message})",
             elapsed,
         )
-    if result.secret != puzzle.practice_solution:
-        return SelfCheckResult(
+    elif result.secret != puzzle.practice_solution:
+        check = SelfCheckResult(
             name, False, puzzle_id, f"returned the wrong key for #{puzzle_id}", elapsed
         )
-    return SelfCheckResult(name, True, puzzle_id, f"solved #{puzzle_id}", elapsed)
+    else:
+        check = SelfCheckResult(name, True, puzzle_id, f"solved #{puzzle_id}", elapsed)
+    record_selfcheck(name, binary, check)
+    return check
 
 
 def selfcheck_engines(
@@ -748,7 +981,7 @@ def format_selfcheck_results(results: list[SelfCheckResult]) -> str:
     lines = ["engine self-check (solves a puzzle with a known answer):"]
     for item in results:
         mark = "ok" if item.ok else "!!"
-        timing = f" in {item.seconds:.1f}s" if item.seconds else ""
+        timing = f" in {item.seconds:.1f}s" if item.seconds and not item.cached else ""
         lines.append(f"  [{mark}] {item.name:<11} {item.message}{timing}")
     return "\n".join(lines)
 
@@ -762,15 +995,18 @@ def install_engines(
 
     Default set: keyhunt + kangaroo, and bitcrack when ``nvcc`` is present.
     """
-    missing = missing_build_tools()
-    missing_headers = missing_build_headers()
-    if missing or missing_headers:
-        raise RuntimeError(build_deps_hint(missing, missing_headers))
-
     selected = list(names or default_install_names())
     unknown = [n for n in selected if n not in INSTALLABLE and n not in MANUAL_ONLY]
     if unknown:
         raise ValueError(f"unknown engine(s): {', '.join(unknown)}")
+
+    # Only demand a compiler when something is going to be compiled: a host that
+    # already has the builds cached should not need libgmp-dev to copy them.
+    if any(needs_compile(name, force=force) for name in selected):
+        missing = missing_build_tools()
+        missing_headers = missing_build_headers()
+        if missing or missing_headers:
+            raise RuntimeError(build_deps_hint(missing, missing_headers))
 
     results: list[InstallResult] = []
     installed_paths: dict[str, Path] = {}
@@ -832,6 +1068,7 @@ def ensure_engine(
     install_deps: bool = True,
     selfcheck: bool = True,
     selfcheck_timeout: float = 180.0,
+    use_selfcheck_cache: bool = True,
 ) -> EnsureResult:
     """Get ``engine`` from "named" to "verified working", doing whatever is missing.
 
@@ -854,7 +1091,11 @@ def ensure_engine(
                 deps: DepResult | None, note: str) -> EnsureResult:
         check = None
         if selfcheck and engine in SELFCHECK_PUZZLES:
-            check = selfcheck_engine(engine, timeout=selfcheck_timeout)
+            check = None
+            if use_selfcheck_cache and binary is not None:
+                check = cached_selfcheck(engine, binary)
+            if check is None:
+                check = selfcheck_engine(engine, timeout=selfcheck_timeout)
             if not check.ok:
                 return EnsureResult(
                     engine=engine,
@@ -866,7 +1107,8 @@ def ensure_engine(
                     install=install,
                     selfcheck=check,
                 )
-            note = f"{note}; self-check {check.message} in {check.seconds:.1f}s"
+            timing = "" if check.cached else f" in {check.seconds:.1f}s"
+            note = f"{note}; self-check {check.message}{timing}"
         return EnsureResult(
             engine=engine,
             ok=True,
@@ -882,16 +1124,19 @@ def ensure_engine(
     if existing is not None and not force:
         return _verify(existing, already=True, install=None, deps=None, note="already installed")
 
-    deps = ensure_build_deps(engine, auto_install=install_deps)
-    if not deps.ok:
-        return EnsureResult(
-            engine=engine,
-            ok=False,
-            already_present=False,
-            binary=None,
-            message=deps.message,
-            deps=deps,
-        )
+    if needs_compile(engine, force=force):
+        deps = ensure_build_deps(engine, auto_install=install_deps)
+        if not deps.ok:
+            return EnsureResult(
+                engine=engine,
+                ok=False,
+                already_present=False,
+                binary=None,
+                message=deps.message,
+                deps=deps,
+            )
+    else:
+        deps = DepResult(ok=True, message="no compile needed (a cached build is reusable)")
 
     try:
         results = install_engines([engine], force=force)

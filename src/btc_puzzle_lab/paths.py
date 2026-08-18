@@ -87,7 +87,6 @@ def puzzles_file() -> Path:
 
 
 REPO_ROOT = _LazyPath(workspace_root)
-DATA_DIR = _LazyPath(lambda: workspace_root() / "data")
 PUZZLES_FILE = _LazyPath(puzzles_file)
 STATE_DIR = _LazyPath(lambda: workspace_root() / "state")
 HITS_FILE = _LazyPath(lambda: workspace_root() / "state" / "HITS.jsonl")

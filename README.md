@@ -63,6 +63,10 @@ btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
 
+Needs **Python 3.12+**. The bootstrap scripts check this first and name an
+interpreter to install if the host is older; `pip` alone reports it as a
+resolver error two minutes into the run.
+
 Writable `state/` and `config/` resolve in this order:
 
 1. `BTC_PUZZLE_LAB_HOME` (if set)
@@ -70,46 +74,69 @@ Writable `state/` and `config/` resolve in this order:
 3. the current working directory (wheel / plain installs)
 
 Copy `config/.env.example` → `config/.env` only when exercising auto-transfer.
+Installed from a wheel, with no checkout to copy from? `btc-puzzle-lab config
+--write-example` writes that template into the workspace first.
 
 ### Cursor Cloud
 
 Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scripts/cloud-install.sh`). Do not put secrets or `config/.env` into the image.
 
-## Stable workflow
+## The workflow
+
+There is one:
+
+```bash
+btc-puzzle-lab auto <id>
+```
+
+It runs seven stages and reports each one before starting the next, so a failure
+names the step that failed instead of surfacing forty minutes into a build:
 
 ```text
-auto <id>   (config → catalog → host → engine → build+verify → watch → audit → sweep)
-
-# or the same steps by hand:
-host / adapt → engines install → once
-                 (sync → plan → one gpu/cpu slot → audit → optional sweep)
-
-import-catalog → plan → batch → status → audit → transfer
+config → catalog → host → engine → target → build+verify → hunt
+                                                             └─ audit → sweep
 ```
+
+| | |
+|---|---|
+| `auto <id>` | The above, end to end ([docs/AUTO.md](docs/AUTO.md)) |
+| `auto <id> --plan-only` | Print the engine decision and stop. Builds nothing, takes ~0.2s |
+| `config --dest … --notify …` | Store payout and alert once; later runs need only the id |
+| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
+
+Sweeps stay dry-run until you pass `--live`.
+
+<details>
+<summary><b>The steps underneath, as separate commands</b></summary>
+
+`auto` drives these for you. Reach for them when you want to see what it saw, or
+when it stopped and you want to redo one step by hand. `--help-all` lists them.
 
 | Command | Role |
 |---|---|
-| `auto` | One target, end to end: pick engine → build it → hunt ([docs/AUTO.md](docs/AUTO.md)) |
-| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
-| `config` | Persist dest / notify / relay without starting a search |
-| `host` | Probe CPU / RAM / GPU / disk / engines → tier |
-| `adapt` | Same probe + recommended next actions |
-| `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
-| `watch` | Repeat `once` with hour/pass budgets |
-| `import-catalog` | Load full catalog into workspace `data/puzzles.json` |
-| `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
+| `adapt` (alias `host`) | Probe CPU / RAM / GPU / disk / engines → tier, and what to do about it |
+| `doctor` | Blocking preflight |
+| `engines install` / `selfcheck` | Build solvers into `bin/`; prove they return a key |
+| `import-catalog` | Load the full catalog into workspace `data/puzzles.json` |
+| `plan` | Build the catalog-wide job board (`state/batch_plan.json`) |
 | `batch` | Execute ready jobs (limit / resume / stop-on-hit) |
 | `status` | Matrix: job status × coverage × hit |
-| `run --auto` | One-shot search using **installed** solvers (`plan_strategy`); not the `auto` command |
+| `once` | One pass of sync → plan → slot → audit → sweep ([docs/LOOP.md](docs/LOOP.md)) |
+| `watch` | Repeat `once` with hour / pass budgets |
+| `run <id>` | A single search, bypassing the job board |
+| `strategy <id>` | What `run` would choose from **installed** solvers — not the `auto` decision |
+| `list` / `verify` / `coverage` / `summary` | Catalog and local state |
+| `audit` / `transfer` / `verify-dry-run` | The money path after a hit |
+| `relay-keygen` / `unseal` / `relay-flush` | Control-VPS relay ops |
 
 ```bash
-btc-puzzle-lab host
 btc-puzzle-lab adapt
-btc-puzzle-lab import-catalog
 btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
 btc-puzzle-lab status
 btc-puzzle-lab batch --limit 5 --stop-on-hit
 ```
+
+</details>
 
 ### Environment adaptation
 
@@ -138,9 +165,9 @@ Blocked jobs are intentional: preferred algorithm is recorded even when the solv
 Default install ships a small **practice** catalog (solved puzzles for pipeline drills).
 
 Import the **full** Bitcoin Puzzle Transaction list (160 entries). Default uses the
-bundled CSV snapshot (`data/puzzle-tx-export.csv`); this writes workspace
-`data/puzzles.json` (overrides the packaged practice set for local runs — do not
-commit a full import unless you intend to):
+CSV snapshot shipped inside the package; this writes workspace
+`data/puzzles.json`, which overrides the packaged practice set for local runs.
+That path is gitignored output — `auto` rewrites it on every run.
 
 ```bash
 btc-puzzle-lab import-catalog
@@ -273,6 +300,18 @@ exact package line for your distro, instead of failing deep inside `make`.
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
 `config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
 
+`bin/` is per-workspace, but the upstream checkouts and their object files are
+shared across workspaces on the same host, so a second clone of this repo copies
+the binaries instead of recompiling them:
+
+1. `BTC_PUZZLE_LAB_CACHE` (if set) → `<cache>/vendor/`
+2. an existing workspace `vendor/` (hosts provisioned before this behaviour)
+3. `~/.cache/btc-puzzle-lab/vendor/`
+
+A build already present in that tree is reused as-is. `engines install --force`
+recompiles regardless — needed after changing a `*_COMMIT` pin, or to rebuild
+BitCrack for a different card.
+
 Upstream solvers are checked out at pinned commits so two hosts install the same
 thing; override per engine with `BTC_PUZZLE_LAB_<ENGINE>_COMMIT`.
 
@@ -291,6 +330,16 @@ btc-puzzle-lab engines install --no-selfcheck   # skip it (leaves engines unveri
 ```
 
 This runs real searches, so it is a local-only command — never wire it into CI.
+
+`auto` verifies the engine on every run, but not by re-searching every time: a
+pass is recorded in `state/selfcheck.json` against the SHA-256 of the binary that
+produced it, and a matching digest is accepted without re-running. A rebuild, a
+different commit or a swapped binary changes the digest and earns a fresh check.
+`engines selfcheck` always searches for real and refreshes that record.
+
+For the GPU engines the record is scoped to the detected compute capability too,
+so moving a workspace to a different card re-verifies rather than trusting a
+kernel that may not load on it.
 
 ```bash
 btc-puzzle-lab engines
@@ -343,9 +392,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
 | `config/.env` | Local transfer / notify / relay config (gitignored) |
 | `config/relay-secret` | Control VPS seal secret (gitignored, mode `0600`) |
-| `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
-| `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
-| `vendor/` | Cloned upstream solver sources (`engines install`, gitignored) |
+| `data/` | Workspace catalog override written by `import-catalog` (gitignored output) |
+| `vendor/` | Cloned upstream solver sources + build trees (shared cache; see above) |
+| `state/selfcheck.json` | Which solver builds have passed the self-check here |
 | `bin/` | Built solver binaries (`engines install`, gitignored) |
 | `config/engines.env` | Auto-written solver paths (gitignored) |
 

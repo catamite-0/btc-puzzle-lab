@@ -39,7 +39,7 @@ jobs:
           btc-puzzle-lab --version
           btc-puzzle-lab list
           btc-puzzle-lab verify 1
-          btc-puzzle-lab host
+          btc-puzzle-lab adapt
 
       - name: Extract release notes
         run: |
