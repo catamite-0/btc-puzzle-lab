@@ -14,11 +14,13 @@
 - Never commit `state/`, `config/.env`, `dist/`, or hit/dry-run files.
 - Do not print private keys or signed tx hex in chat, logs, commits, or PR text.
   CLI may show keys only with explicit `--show-key`.
-- Catalog ships inside the package (`btc_puzzle_lab/data/puzzles.json`); keep
-  top-level `data/puzzles.json` in sync when editing the practice set.
-- Full catalog: `import-catalog` writes workspace `data/puzzles.json` from
-  bundled `data/puzzle-tx-export.csv` (keep CSV copies in sync under `data/` and
-  `src/btc_puzzle_lab/data/`). Do not commit a full-catalog override unless intentional.
+- Catalog and CSV snapshot live in the package only
+  (`src/btc_puzzle_lab/data/`), and that is the single source of truth. Edit the
+  practice set there.
+- Top-level `data/` is workspace output, not source: `import-catalog` writes
+  `data/puzzles.json` there and `auto` calls it on every run. It is gitignored —
+  it used to hold tracked byte-identical copies of the package data, so one
+  `auto` run dirtied the checkout and the two copies could drift apart.
 - Automation: `auto <id>` is the default hunt entry (config → catalog → host →
   engine → build+verify → watch); docs in `docs/AUTO.md`. Restricted boxes POST
   sealed hits to `hub` on the always-on control VPS. Manual path is

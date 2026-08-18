@@ -41,11 +41,29 @@ All notable changes to this project are documented here.
   Fourteen were not, including the `*_REPO` mirrors `china-bootstrap.sh` relies on.
 
 ### Fixed
+- `auto` ignored `BTC_PUZZLE_LAB_ENGINE` / `_DP` / `_THREADS` and then overwrote
+  them with its own choice for the run, while `strategy`, `run` and `plan` had
+  always honoured them. `export BTC_PUZZLE_LAB_DP=30` before an `auto` run —
+  which `china-bootstrap.sh` instructs — therefore did nothing. `auto` now reads
+  them through the same validated path as `--engine`, reports which pin it used,
+  and still lets an explicit flag outrank the environment.
+- `data/puzzles.json` and `data/puzzle-tx-export.csv` were tracked in git as
+  byte-identical copies of the package data, while `data/` is also where
+  `import-catalog` writes — and `auto` calls that on every run. One `auto` in a
+  checkout left the tree dirty (139 → 1927 lines). `data/` is gitignored output
+  now; the packaged copies are the only source.
 - `auto --plan-only` built the solver before reporting that it had not searched,
   though both its help text and the README promise it builds nothing. On a GPU box
   that was minutes of nvcc to answer which engine would be picked. It now stops at
   the decision: ~0.2s, nothing written. The test that should have caught this
   asserted the build *had* happened, under the name "stops before building".
+
+### Removed
+- `audit_result_public_dict()`, unused since v0.2 and a second implementation of
+  "what is safe to write out of an audit row" — a denylist (`asdict` then drop
+  `hit`) next to the allowlist `export_audit_report` actually uses. A new secret
+  field on the dataclass would have leaked through the copy nothing exercised.
+- `paths.DATA_DIR`, an export nothing read.
 
 ### Added
 - `config --write-example` writes the annotated `config/.env.example` template.

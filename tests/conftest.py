@@ -9,6 +9,11 @@ _ENGINE_PATH_VARS = (
     "KANGAROO_PATH",
     "BITCRACK_PATH",
     "RCKANGAROO_PATH",
+    # Strategy pins. `auto` honours these now, so a stray one in the developer's
+    # shell would choose the engine a test thought it was deriving.
+    "BTC_PUZZLE_LAB_ENGINE",
+    "BTC_PUZZLE_LAB_DP",
+    "BTC_PUZZLE_LAB_THREADS",
 )
 
 # Keys `bootstrap_config` writes straight into os.environ so the running process

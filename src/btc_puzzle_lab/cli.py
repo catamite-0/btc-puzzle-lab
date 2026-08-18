@@ -1095,7 +1095,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
 
     p_strategy = sub.add_parser(
         "strategy",
-        help="show inventory-aware engine plan (what can run now; not the `auto` command)",
+        help="what `run` would pick for a target from the solvers already installed",
     )
     p_strategy.add_argument("puzzle", type=int, help="puzzle id, e.g. 20")
     p_strategy.set_defaults(func=cmd_strategy)

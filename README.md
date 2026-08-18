@@ -165,9 +165,9 @@ Blocked jobs are intentional: preferred algorithm is recorded even when the solv
 Default install ships a small **practice** catalog (solved puzzles for pipeline drills).
 
 Import the **full** Bitcoin Puzzle Transaction list (160 entries). Default uses the
-bundled CSV snapshot (`data/puzzle-tx-export.csv`); this writes workspace
-`data/puzzles.json` (overrides the packaged practice set for local runs — do not
-commit a full import unless you intend to):
+CSV snapshot shipped inside the package; this writes workspace
+`data/puzzles.json`, which overrides the packaged practice set for local runs.
+That path is gitignored output — `auto` rewrites it on every run.
 
 ```bash
 btc-puzzle-lab import-catalog
@@ -392,8 +392,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on pushes and P
 | `state/dryrun_*.txhex` | Dry-run signed txs (gitignored, mode `0600`) |
 | `config/.env` | Local transfer / notify / relay config (gitignored) |
 | `config/relay-secret` | Control VPS seal secret (gitignored, mode `0600`) |
-| `data/puzzles.json` | Active catalog override (practice set in git; full import is local) |
-| `data/puzzle-tx-export.csv` | Bundled full-catalog CSV snapshot |
+| `data/` | Workspace catalog override written by `import-catalog` (gitignored output) |
 | `vendor/` | Cloned upstream solver sources + build trees (shared cache; see above) |
 | `state/selfcheck.json` | Which solver builds have passed the self-check here |
 | `bin/` | Built solver binaries (`engines install`, gitignored) |

@@ -86,6 +86,16 @@ def _pinned_env(values: dict[str, str]) -> Iterator[None]:
                 os.environ[key] = old
 
 
+def _env_int(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 def plan_file_for(puzzle_id: int) -> Path:
     """Per-target job board, so two auto runs never overwrite each other's plan."""
     return Path(STATE_DIR) / f"plan_{puzzle_id}.json"
@@ -187,6 +197,22 @@ def run_auto(
 
     # 4. engine — decided from the target and the hardware, never from what
     #    happens to be installed (see recommend.py).
+    #
+    # An exported pin is a decision the operator already made. `strategy`, `run`
+    # and `plan` have always honoured these; `auto` used to ignore them and then
+    # overwrite them with its own choice for the run, so `export
+    # BTC_PUZZLE_LAB_DP=30` before `auto` — which china-bootstrap.sh tells you to
+    # do — quietly did nothing. Explicit arguments still outrank the environment.
+    pin_source = "--engine"
+    if engine is None:
+        env_engine = os.environ.get("BTC_PUZZLE_LAB_ENGINE", "").strip().lower()
+        if env_engine:
+            engine, pin_source = env_engine, "BTC_PUZZLE_LAB_ENGINE"
+    if dp is None:
+        dp = _env_int("BTC_PUZZLE_LAB_DP")
+    if threads is None:
+        threads = _env_int("BTC_PUZZLE_LAB_THREADS")
+
     if engine:
         if engine not in ENGINES and engine not in {"sequential", "window", "inject-known"}:
             record("engine", False, f"unknown engine: {engine}")
@@ -194,7 +220,7 @@ def run_auto(
         choice = EngineChoice(
             engine=engine,
             resource="gpu" if engine in GPU_ENGINES else "cpu",
-            reason="pinned by --engine",
+            reason=f"pinned by {pin_source}",
             needs_install=engine in ENGINES,
             dp=(
                 dp
