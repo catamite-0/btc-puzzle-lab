@@ -90,6 +90,7 @@ Optional second puzzle only if it is a **different** pubkey/CPU job and does not
 Keep dry-run until verified. See [TRANSFER.md](TRANSFER.md).
 
 ```bash
+# no checkout (wheel install)? btc-puzzle-lab config --write-example
 cp config/.env.example config/.env
 # set DEST_ADDR; leave DRY_RUN=true
 btc-puzzle-lab transfer --verify-dry-run

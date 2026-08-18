@@ -6,6 +6,7 @@ Defaults stay safe: transfer disabled + dry-run.
 ## Prerequisites
 
 ```bash
+# no checkout (wheel install)? btc-puzzle-lab config --write-example
 cp config/.env.example config/.env
 # edit:
 #   AUTO_TRANSFER_ENABLED=true

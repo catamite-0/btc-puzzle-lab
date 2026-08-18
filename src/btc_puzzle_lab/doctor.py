@@ -129,7 +129,10 @@ def run_doctor() -> list[Check]:
             True,
             f"present ({env_file})"
             if env_file.is_file()
-            else f"missing ({env_file}) — copy config/.env.example when ready to sweep",
+            else (
+                f"missing ({env_file}) — `btc-puzzle-lab config --write-example`, "
+                "then copy it to config/.env when ready to sweep"
+            ),
         )
     )
     try:

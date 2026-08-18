@@ -74,6 +74,8 @@ Writable `state/` and `config/` resolve in this order:
 3. the current working directory (wheel / plain installs)
 
 Copy `config/.env.example` → `config/.env` only when exercising auto-transfer.
+Installed from a wheel, with no checkout to copy from? `btc-puzzle-lab config
+--write-example` writes that template into the workspace first.
 
 ### Cursor Cloud
 
@@ -95,7 +97,7 @@ import-catalog → plan → batch → status → audit → transfer
 |---|---|
 | `auto` | One target, end to end: pick engine → build it → hunt ([docs/AUTO.md](docs/AUTO.md)) |
 | `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
-| `config` | Persist dest / notify / relay without starting a search |
+| `config` | Persist dest / notify / relay; `--write-example` drops the `.env` template |
 | `host` | Probe CPU / RAM / GPU / disk / engines → tier |
 | `adapt` | Same probe + recommended next actions |
 | `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |

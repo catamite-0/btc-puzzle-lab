@@ -3,65 +3,14 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from btc_puzzle_lab import __version__
-from btc_puzzle_lab.audit import audit_hits, export_audit_report
-from btc_puzzle_lab.autorun import STAGES, Stage, run_auto
-from btc_puzzle_lab.batch import (
-    batch_plan_path,
-    build_plan,
-    format_plan,
-    format_status,
-    load_plan,
-    run_batch,
-    save_plan,
-)
-from btc_puzzle_lab.catalog import get_puzzle, load_puzzles
-from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL, import_catalog
-from btc_puzzle_lab.coverage import format_coverage, load_coverage
-from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
-from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
-from btc_puzzle_lab.engines import format_engine_status
-from btc_puzzle_lab.hits import read_hits
-from btc_puzzle_lab.hub import serve_hub
-from btc_puzzle_lab.loop import format_loop_result, format_watch_result, run_once, run_watch
-from btc_puzzle_lab.paths import HITS_FILE, STATE_DIR, coverage_path
-from btc_puzzle_lab.relay import (
-    flush_outbox,
-    generate_relay_keypair,
-    generate_relay_token,
-    unseal_hit,
-    write_relay_secret,
-)
-from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE, run_puzzle
-from btc_puzzle_lab.settings import (
-    bootstrap_config,
-    get_transfer_settings,
-    validate_transfer_settings,
-)
-from btc_puzzle_lab.strategy import (
-    SAFE_DP,
-    adapt_recommendations,
-    format_host_profile,
-    plan_strategy,
-    probe_host,
-)
-from btc_puzzle_lab.summary import build_summary, format_summary
-from btc_puzzle_lab.toolchain import (
-    INSTALLABLE,
-    SELFCHECK_PUZZLES,
-    format_install_results,
-    format_selfcheck_results,
-    install_engines,
-    selfcheck_engines,
-)
-from btc_puzzle_lab.transfer import (
-    TransferResult,
-    broadcast_dry_run_file,
-    format_transfer_policy,
-    sweep_hit,
-    verify_dry_run_file,
-)
+from btc_puzzle_lab.catalog_import import DEFAULT_EXPORT_URL
+from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE
+
+if TYPE_CHECKING:
+    from btc_puzzle_lab.transfer import TransferResult
 
 _ENGINE_CHOICES = [
     "sequential",
@@ -96,6 +45,16 @@ def _print_transfer(result: TransferResult) -> None:
 
 
 def cmd_config(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.relay import generate_relay_token
+    from btc_puzzle_lab.settings import bootstrap_config, write_env_example
+
+    if args.write_example:
+        path, written = write_env_example(overwrite=args.force)
+        verb = "wrote" if written else "already present (pass --force to overwrite)"
+        print(f"{verb}: {path}")
+        print(f"next: cp {path} {Path(path).with_name('.env')} and fill it in")
+        return 0
+
     token = args.relay_token
     generated: str | None = None
     if args.new_relay_token:
@@ -125,6 +84,8 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def cmd_relay_keygen(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.relay import generate_relay_keypair, write_relay_secret
+
     secret, pubkey = generate_relay_keypair()
     path = write_relay_secret(secret)
     print(f"wrote secret : {path} (mode 0600; keep this control host only)")
@@ -142,6 +103,8 @@ def cmd_relay_keygen(_: argparse.Namespace) -> int:
 
 
 def cmd_unseal(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.relay import unseal_hit
+
     raw = args.token
     if args.file:
         raw = Path(args.file).read_text(encoding="utf-8")
@@ -165,6 +128,8 @@ def cmd_unseal(args: argparse.Namespace) -> int:
 
 
 def cmd_relay_flush(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.relay import flush_outbox
+
     results = flush_outbox()
     if not results:
         print("relay outbox: nothing pending")
@@ -179,6 +144,8 @@ def cmd_relay_flush(_: argparse.Namespace) -> int:
 
 
 def cmd_hub(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.hub import serve_hub
+
     try:
         serve_hub(
             host=args.host,
@@ -196,6 +163,8 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
 
 def cmd_list(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.catalog import load_puzzles
+
     print(f"{'ID':>4}  {'bits':>4}  {'engine':<12}  address")
     for puzzle in load_puzzles():
         print(
@@ -207,6 +176,9 @@ def cmd_list(_: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.catalog import get_puzzle
+    from btc_puzzle_lab.crypto import privkey_bytes, privkey_to_p2pkh_address
+
     puzzle = get_puzzle(args.puzzle)
     if puzzle.practice_solution is None:
         print(f"puzzle #{puzzle.id} has no practice solution in catalog", file=sys.stderr)
@@ -222,6 +194,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.catalog import get_puzzle
+    from btc_puzzle_lab.coverage import format_coverage
+    from btc_puzzle_lab.paths import HITS_FILE
+    from btc_puzzle_lab.search import run_puzzle
+    from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+    from btc_puzzle_lab.strategy import SAFE_DP, plan_strategy
+    from btc_puzzle_lab.transfer import sweep_hit
+
     puzzle = get_puzzle(args.puzzle)
     run_kwargs = dict(
         engine=args.engine,
@@ -286,6 +266,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_strategy(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.catalog import get_puzzle
+    from btc_puzzle_lab.strategy import plan_strategy
+
     puzzle = get_puzzle(args.puzzle)
     plan = plan_strategy(puzzle)
     print(f"puzzle #{puzzle.id} bits={puzzle.bits}")
@@ -294,6 +277,16 @@ def cmd_strategy(args: argparse.Namespace) -> int:
 
 
 def cmd_engines(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.engines import format_engine_status
+    from btc_puzzle_lab.toolchain import (
+        INSTALLABLE,
+        SELFCHECK_PUZZLES,
+        format_install_results,
+        format_selfcheck_results,
+        install_engines,
+        selfcheck_engines,
+    )
+
     action = getattr(args, "engines_action", "status") or "status"
     if action == "install":
         only = None
@@ -332,12 +325,17 @@ def cmd_engines(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.doctor import doctor_ok, format_doctor, run_doctor
+
     checks = run_doctor()
     print(format_doctor(checks))
     return 0 if doctor_ok(checks) else 1
 
 
 def cmd_coverage(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.coverage import format_coverage, load_coverage
+    from btc_puzzle_lab.paths import STATE_DIR, coverage_path
+
     if args.puzzle is not None:
         ledger = load_coverage(args.puzzle)
         if ledger is None:
@@ -362,6 +360,10 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.audit import audit_hits, export_audit_report
+    from btc_puzzle_lab.hits import read_hits
+    from btc_puzzle_lab.paths import HITS_FILE
+
     hits = read_hits()
     if not hits:
         print(f"no hits in {HITS_FILE}")
@@ -391,6 +393,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_transfer(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.hits import read_hits
+    from btc_puzzle_lab.paths import HITS_FILE
+    from btc_puzzle_lab.settings import get_transfer_settings, validate_transfer_settings
+    from btc_puzzle_lab.transfer import (
+        broadcast_dry_run_file,
+        format_transfer_policy,
+        sweep_hit,
+        verify_dry_run_file,
+    )
+
     settings = get_transfer_settings()
     errors = validate_transfer_settings(settings)
     if errors:
@@ -449,6 +461,9 @@ def cmd_transfer(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_dry_run(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.settings import get_transfer_settings
+    from btc_puzzle_lab.transfer import verify_dry_run_file
+
     settings = get_transfer_settings()
     result = verify_dry_run_file(
         args.path,
@@ -471,12 +486,16 @@ def cmd_verify_dry_run(args: argparse.Namespace) -> int:
 
 
 def cmd_summary(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.summary import build_summary, format_summary
+
     summary = build_summary(recent=args.recent)
     print(format_summary(summary))
     return 0
 
 
 def cmd_import_catalog(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.catalog_import import import_catalog
+
     csv_path = Path(args.from_csv) if args.from_csv else None
     output = Path(args.output) if args.output else None
     url = args.url
@@ -499,6 +518,8 @@ def cmd_import_catalog(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.batch import batch_plan_path, build_plan, format_plan, save_plan
+
     ids = [int(part) for part in args.ids.split(",")] if args.ids else None
     plan = build_plan(
         status=args.status,
@@ -514,6 +535,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.batch import batch_plan_path, load_plan, run_batch
+
     path = Path(args.plan) if args.plan else batch_plan_path()
     plan = load_plan(path)
     if plan is None:
@@ -540,6 +563,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.batch import batch_plan_path, format_status, load_plan
+
     path = Path(args.plan) if args.plan else None
     plan = load_plan(path) if path else load_plan()
     if plan is None:
@@ -554,12 +579,16 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_host(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.strategy import format_host_profile, probe_host
+
     profile = probe_host()
     print(format_host_profile(profile))
     return 0
 
 
 def cmd_adapt(_: argparse.Namespace) -> int:
+    from btc_puzzle_lab.strategy import adapt_recommendations, format_host_profile, probe_host
+
     profile = probe_host()
     print(format_host_profile(profile))
     print()
@@ -585,6 +614,8 @@ def _loop_plan_path(args: argparse.Namespace) -> Path | None:
 
 
 def cmd_once(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.loop import format_loop_result, run_once
+
     result = run_once(
         sync=not args.no_sync,
         status=args.status,
@@ -610,6 +641,8 @@ def cmd_once(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.loop import format_watch_result, run_watch
+
     result = run_watch(
         max_hours=args.max_hours,
         max_passes=args.max_passes,
@@ -644,6 +677,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_auto(args: argparse.Namespace) -> int:
+    from btc_puzzle_lab.autorun import STAGES, Stage, run_auto
+    from btc_puzzle_lab.loop import format_watch_result
+
     if args.live:
         print(
             "WARNING: --live authorises real BTC broadcasts on a hit "
@@ -855,6 +891,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--new-relay-token",
         action="store_true",
         help="generate a RELAY_TOKEN and print it once",
+    )
+    p_config.add_argument(
+        "--write-example",
+        action="store_true",
+        help=(
+            "write the annotated config/.env.example template and exit "
+            "(the file a wheel install has no checkout to give you)"
+        ),
+    )
+    p_config.add_argument(
+        "--force",
+        action="store_true",
+        help="with --write-example, overwrite an existing template",
     )
     p_config.set_defaults(func=cmd_config)
 

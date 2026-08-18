@@ -27,9 +27,19 @@ All notable changes to this project are documented here.
   install, instead of failing inside pip after apt and a clone. `china-bootstrap`
   uses `.venv` like the other scripts (was `.venv-run`).
 
-### Removed
-- `src/btc_puzzle_lab/data/env.example`, a byte-identical copy of
-  `config/.env.example` that no runtime code read and no doc pointed at.
+- CLI startup no longer imports the whole program. Command modules load inside
+  the handler that needs them, and `catalog_import` stopped pulling `requests`
+  just to hold a URL constant. `--version` went from 290ms to 100ms, and every
+  other invocation with it.
+
+### Added
+- `config --write-example` writes the annotated `config/.env.example` template.
+  A wheel install has no checkout, so the file `doctor` and the docs point at did
+  not exist there; the template ships as package data for exactly this. Refuses
+  to clobber an edited file without `--force`.
+- A test pins `config/.env.example` and the packaged `data/env.example` to be
+  byte-identical. They were duplicated with nothing keeping them in sync, so a
+  knob documented in one could quietly go missing from the other.
 
 ## [0.7.0] — 2026-08-13
 

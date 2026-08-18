@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
-import requests
-
 from btc_puzzle_lab import __version__
 from btc_puzzle_lab.crypto import normalize_privkey_hex
 from btc_puzzle_lab.paths import workspace_root
@@ -58,6 +56,10 @@ def read_bundled_export_csv() -> tuple[str, str]:
 
 
 def fetch_csv(url: str = DEFAULT_EXPORT_URL, *, timeout: float = 60.0) -> str:
+    # Imported here so `DEFAULT_EXPORT_URL` — which the CLI reads to build its
+    # help text — does not drag urllib3 into every invocation.
+    import requests
+
     try:
         resp = requests.get(url, headers=_FETCH_HEADERS, timeout=timeout)
     except requests.RequestException as exc:
