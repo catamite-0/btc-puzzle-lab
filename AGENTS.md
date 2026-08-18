@@ -22,7 +22,10 @@
 - Automation: `auto <id>` is the default hunt entry (config → catalog → host →
   engine → build+verify → watch); docs in `docs/AUTO.md`. Restricted boxes POST
   sealed hits to `hub` on the always-on control VPS. Manual path is
-  `host` / `adapt` → `engines install` → `once` / `watch`. Full loop docs: `docs/LOOP.md`.
+  `adapt` (alias `host`) → `engines install` → `once` / `watch`. Full loop docs: `docs/LOOP.md`.
+- `--help` lists only `auto` and the handful around it; the layers `auto` drives
+  sit behind `--help-all` (`_ADVANCED` in `cli.py`). A new command has to be put
+  in one bucket or the other.
 - Engine choice for `auto` lives in `recommend.py` and must stay inventory-blind:
   it reads the target and the host, never `available_engines()` (ARCHITECTURE §5).
 - Resource model: one machine occupies one scarce slot (`gpu` or `cpu`);

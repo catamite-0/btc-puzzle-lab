@@ -12,6 +12,31 @@ from btc_puzzle_lab.search import DEFAULT_CHUNK_SIZE
 if TYPE_CHECKING:
     from btc_puzzle_lab.transfer import TransferResult
 
+# Commands kept out of the default listing. They all still work; they are the
+# layers `auto` drives, plus the inspection surface you only reach for when
+# something looks wrong. Grouped here so `--help` stays readable.
+_ADVANCED: dict[str, tuple[str, ...]] = {
+    "catalog and inspection": ("list", "verify", "coverage", "status", "strategy", "adapt"),
+    "solver toolchain": ("engines",),
+    "the pipeline auto runs for you": (
+        "import-catalog", "plan", "batch", "run", "once", "watch",
+    ),
+    "control-VPS relay ops": ("relay-keygen", "unseal", "relay-flush", "verify-dry-run"),
+}
+
+_ADVANCED_HELP = "more commands (btc-puzzle-lab <command> --help for each):\n" + "\n".join(
+    f"  {group:<32} {', '.join(names)}" for group, names in _ADVANCED.items()
+)
+
+
+class _HelpAll(argparse.Action):
+    """`--help-all`: the same page, with every command spelled out."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        build_parser(hide_advanced=False).print_help()
+        raise SystemExit(0)
+
+
 _ENGINE_CHOICES = [
     "sequential",
     "window",
@@ -578,14 +603,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_host(_: argparse.Namespace) -> int:
-    from btc_puzzle_lab.strategy import format_host_profile, probe_host
-
-    profile = probe_host()
-    print(format_host_profile(profile))
-    return 0
-
-
 def cmd_adapt(_: argparse.Namespace) -> int:
     from btc_puzzle_lab.strategy import adapt_recommendations, format_host_profile, probe_host
 
@@ -780,13 +797,29 @@ def _add_dest_notify_relay_args(
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="btc-puzzle-lab",
-        description="Practice lab for Bitcoin Puzzle Transaction workflows",
+        description=(
+            "Practice lab for Bitcoin Puzzle Transaction workflows.\n"
+            "\n"
+            "Name a puzzle and `auto` does the rest: it reads the target, probes\n"
+            "this machine, picks the solver the two of them call for, builds and\n"
+            "verifies it, then hunts. The steps it runs are commands of their own\n"
+            "for when you need to look inside — `--help-all` lists them."
+        ),
+        epilog=_ADVANCED_HELP if hide_advanced else None,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "--help-all",
+        action=_HelpAll,
+        nargs=0,
+        help="list every command, including the ones auto drives for you",
+    )
+    # metavar keeps argparse from printing all 25 command names in the usage line.
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     p_auto = sub.add_parser(
         "auto",
@@ -1124,12 +1157,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eng_check.set_defaults(func=cmd_engines, engines_action="selfcheck")
     p_engines.set_defaults(func=cmd_engines, engines_action="status")
 
-    p_host = sub.add_parser("host", help="probe host profile (CPU/RAM/GPU/engines/tier)")
-    p_host.set_defaults(func=cmd_host)
-
+    # `host` was the same probe as `adapt` minus the advice, so it is an alias now.
     p_adapt = sub.add_parser(
         "adapt",
-        help="show environment-adaptive profile and recommended next actions",
+        aliases=["host"],
+        help="probe CPU/RAM/GPU/engines, classify the tier, recommend next actions",
     )
     p_adapt.set_defaults(func=cmd_adapt)
 
@@ -1438,6 +1470,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="import-catalog every N passes (default: 1)",
     )
     p_watch.set_defaults(func=cmd_watch)
+
+    if hide_advanced:
+        # Drop the help entries only: every command still parses and runs. A flat
+        # list of 25 names buried `auto`, which is the one anybody starts from.
+        hidden = {name for names in _ADVANCED.values() for name in names}
+        sub._choices_actions = [
+            action for action in sub._choices_actions if action.dest not in hidden
+        ]
 
     return parser
 

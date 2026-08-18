@@ -77,7 +77,11 @@ def test_plan_only_stops_before_building_or_searching(monkeypatch):
     assert result.choice.engine == "keyhunt"
     assert result.watch is None
     assert "not started" in _stage(result, "run").detail
-    assert builds == ["keyhunt"]  # provisioned, but nothing searched
+    # Nothing compiled. This used to provision the engine and only then report
+    # that it had not searched, so asking which engine a GPU box would pick cost
+    # a full nvcc build first.
+    assert builds == []
+    assert "would build" in _stage(result, "toolchain").detail
 
 
 def test_unknown_puzzle_fails_at_the_catalog_stage():

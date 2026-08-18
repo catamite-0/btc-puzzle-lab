@@ -35,7 +35,7 @@ from btc_puzzle_lab.strategy import (
     HostProfile,
     probe_host,
 )
-from btc_puzzle_lab.toolchain import EnsureResult, ensure_engine
+from btc_puzzle_lab.toolchain import EnsureResult, ensure_engine, needs_compile
 
 STAGES = ("config", "catalog", "host", "engine", "target", "toolchain", "run")
 
@@ -232,6 +232,16 @@ def run_auto(
     # 6. toolchain — fetch, build and verify exactly the engine we chose.
     if not choice.needs_install:
         record("toolchain", True, f"{choice.engine} is built in; nothing to build")
+    elif plan_only:
+        # --plan-only used to fall through to the build and only then report that
+        # it had not started a search, which on a GPU box is minutes of nvcc to
+        # answer a question about which engine would be picked.
+        detail = (
+            f"would build and verify {choice.engine}"
+            if needs_compile(choice.engine)
+            else f"{choice.engine} is installed; would verify it"
+        )
+        record("toolchain", True, f"{detail} (--plan-only)")
     elif not build:
         record("toolchain", True, f"build skipped (--no-build); assuming {choice.engine} is present")
     else:

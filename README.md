@@ -81,41 +81,62 @@ Installed from a wheel, with no checkout to copy from? `btc-puzzle-lab config
 
 Repo-managed cloud config lives in `.cursor/environment.json` (Dockerfile + `scripts/cloud-install.sh`). Do not put secrets or `config/.env` into the image.
 
-## Stable workflow
+## The workflow
+
+There is one:
+
+```bash
+btc-puzzle-lab auto <id>
+```
+
+It runs seven stages and reports each one before starting the next, so a failure
+names the step that failed instead of surfacing forty minutes into a build:
 
 ```text
-auto <id>   (config → catalog → host → engine → build+verify → watch → audit → sweep)
-
-# or the same steps by hand:
-host / adapt → engines install → once
-                 (sync → plan → one gpu/cpu slot → audit → optional sweep)
-
-import-catalog → plan → batch → status → audit → transfer
+config → catalog → host → engine → target → build+verify → hunt
+                                                             └─ audit → sweep
 ```
+
+| | |
+|---|---|
+| `auto <id>` | The above, end to end ([docs/AUTO.md](docs/AUTO.md)) |
+| `auto <id> --plan-only` | Print the engine decision and stop. Builds nothing, takes ~0.2s |
+| `config --dest … --notify …` | Store payout and alert once; later runs need only the id |
+| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
+
+Sweeps stay dry-run until you pass `--live`.
+
+<details>
+<summary><b>The steps underneath, as separate commands</b></summary>
+
+`auto` drives these for you. Reach for them when you want to see what it saw, or
+when it stopped and you want to redo one step by hand. `--help-all` lists them.
 
 | Command | Role |
 |---|---|
-| `auto` | One target, end to end: pick engine → build it → hunt ([docs/AUTO.md](docs/AUTO.md)) |
-| `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
-| `config` | Persist dest / notify / relay; `--write-example` drops the `.env` template |
-| `host` | Probe CPU / RAM / GPU / disk / engines → tier |
-| `adapt` | Same probe + recommended next actions |
-| `once` | Full loop on one resource slot (see [docs/LOOP.md](docs/LOOP.md)) |
-| `watch` | Repeat `once` with hour/pass budgets |
-| `import-catalog` | Load full catalog into workspace `data/puzzles.json` |
-| `plan` | Build catalog-wide job board (`state/batch_plan.json`) |
+| `adapt` (alias `host`) | Probe CPU / RAM / GPU / disk / engines → tier, and what to do about it |
+| `doctor` | Blocking preflight |
+| `engines install` / `selfcheck` | Build solvers into `bin/`; prove they return a key |
+| `import-catalog` | Load the full catalog into workspace `data/puzzles.json` |
+| `plan` | Build the catalog-wide job board (`state/batch_plan.json`) |
 | `batch` | Execute ready jobs (limit / resume / stop-on-hit) |
 | `status` | Matrix: job status × coverage × hit |
-| `run --auto` | One-shot search using **installed** solvers (`plan_strategy`); not the `auto` command |
+| `once` | One pass of sync → plan → slot → audit → sweep ([docs/LOOP.md](docs/LOOP.md)) |
+| `watch` | Repeat `once` with hour / pass budgets |
+| `run <id>` | A single search, bypassing the job board |
+| `strategy <id>` | What `run` would choose from **installed** solvers — not the `auto` decision |
+| `list` / `verify` / `coverage` / `summary` | Catalog and local state |
+| `audit` / `transfer` / `verify-dry-run` | The money path after a hit |
+| `relay-keygen` / `unseal` / `relay-flush` | Control-VPS relay ops |
 
 ```bash
-btc-puzzle-lab host
 btc-puzzle-lab adapt
-btc-puzzle-lab import-catalog
 btc-puzzle-lab plan --status unsolved --bits-min 32 --verbose
 btc-puzzle-lab status
 btc-puzzle-lab batch --limit 5 --stop-on-hit
 ```
+
+</details>
 
 ### Environment adaptation
 

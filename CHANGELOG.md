@@ -32,6 +32,21 @@ All notable changes to this project are documented here.
   just to hold a URL constant. `--version` went from 290ms to 100ms, and every
   other invocation with it.
 
+- `--help` leads with `auto` and the six commands around it. The other nineteen
+  are the layers `auto` drives plus the inspection surface; they still parse and
+  run, but they sit behind `--help-all` instead of being listed flat alongside
+  everything else. A 25-name wall was the first thing a new machine showed you.
+- `host` is an alias of `adapt`, which was the same probe plus the advice.
+- Every environment variable the code reads is now in `config/.env.example`.
+  Fourteen were not, including the `*_REPO` mirrors `china-bootstrap.sh` relies on.
+
+### Fixed
+- `auto --plan-only` built the solver before reporting that it had not searched,
+  though both its help text and the README promise it builds nothing. On a GPU box
+  that was minutes of nvcc to answer which engine would be picked. It now stops at
+  the decision: ~0.2s, nothing written. The test that should have caught this
+  asserted the build *had* happened, under the name "stops before building".
+
 ### Added
 - `config --write-example` writes the annotated `config/.env.example` template.
   A wheel install has no checkout, so the file `doctor` and the docs point at did

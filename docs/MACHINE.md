@@ -103,7 +103,7 @@ btc-puzzle-lab transfer --verify-dry-run
 | Command | Purpose |
 |---|---|
 | `doctor` | Blocking preflight |
-| `adapt` | Host tier + next actions |
+| `adapt` | Host tier + next actions (`host` is an alias) |
 | `engines install` | Build solvers into `bin/` |
 | `once` | Full sync → plan → search → audit → sweep attempt |
 | `plan` / `batch` / `status` | Catalog automation board |
