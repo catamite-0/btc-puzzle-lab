@@ -117,13 +117,17 @@ def cmd_relay_keygen(_: argparse.Namespace) -> int:
     path = write_relay_secret(secret)
     print(f"wrote secret : {path} (mode 0600; keep this control host only)")
     print(f"pubkey       : {pubkey}")
+    print("BACK THIS SECRET UP OFFLINE — without it, sealed hits cannot be opened.")
     print("on this control VPS:")
     print("  btc-puzzle-lab config --dest <btc-address> --notify https://...")
     print("  btc-puzzle-lab config --new-relay-token")
-    print("  btc-puzzle-lab hub --host 0.0.0.0 --port 8787")
+    # Not 0.0.0.0: the hub speaks plain HTTP and unseals private keys, so it
+    # belongs behind a TLS terminator or a tunnel, never on a public bind.
+    print("  btc-puzzle-lab hub --host 127.0.0.1 --port 8787   # then TLS in front")
+    print("  see docs/DEPLOY.md for the TLS/tunnel and service setup")
     print("on each hunt VPS (no relay-secret, dest stays on the hub):")
     print(
-        "  btc-puzzle-lab auto 140 --relay https://<control>:8787/hit "
+        "  btc-puzzle-lab auto 140 --relay https://<control-hostname>/hit "
         f"--relay-seal-pubkey {pubkey} --relay-token <same-token>"
     )
     return 0

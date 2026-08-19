@@ -42,6 +42,9 @@
 - Python 3.12+ is required (`pyproject`); bootstrap scripts preflight it through
   `scripts/lib-python.sh` rather than letting pip fail late.
 - Machine bootstrap: `scripts/machine-bootstrap.sh` + `docs/MACHINE.md`; preflight via `doctor`.
+- Control VPS: `scripts/control-install.sh` + `docs/DEPLOY.md`. Package only —
+  never a compiler or `engines install` on the host that holds `relay-secret`.
+  `hub` has no TLS and must stay bound to localhost behind a tunnel or proxy.
 - Validate with: `.venv-dev/bin/python -m ruff check src tests` and
   `.venv-dev/bin/python -m pytest`.
 - Ship: merge to `main`, bump versions (`pyproject.toml` + `__version__` + CHANGELOG),
