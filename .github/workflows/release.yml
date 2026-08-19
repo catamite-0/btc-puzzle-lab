@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  # Manual runs exist because pushing a tag is not always available: some
+  # environments are allowed to push branches but not tag refs. The typed
+  # version input is not a convenience — it is the third party to the agreement
+  # a tag push gets for free, so both paths verify the same three things.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, no leading v (e.g. 0.8.0). Must match pyproject and __init__."
+        required: true
+        type: string
 
 jobs:
   release:
@@ -19,9 +29,33 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Refuse to release from a side branch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "$GITHUB_REF_NAME" != "${{ github.event.repository.default_branch }}" ]; then
+            echo "dispatched from '$GITHUB_REF_NAME'; releases are cut from" \
+                 "'${{ github.event.repository.default_branch }}'" >&2
+            exit 1
+          fi
+
+      - name: Refuse to overwrite an existing tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          WANT="${{ inputs.version }}"
+          WANT="v${WANT#v}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$WANT" >/dev/null 2>&1; then
+            echo "$WANT already exists - bump the version instead of re-releasing" >&2
+            exit 1
+          fi
+
       - name: Verify tag matches package version
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.version }}"
+            TAG="${TAG#v}"
+          else
+            TAG="${GITHUB_REF_NAME#v}"
+          fi
           PYPROJECT=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           INIT=$(python -c "import pathlib,re; t=pathlib.Path('src/btc_puzzle_lab/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']+)', t).group(1))")
           test "$TAG" = "$PYPROJECT"
@@ -50,6 +84,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Explicit: on a manual run github.ref is a branch, so the action has
+          # no tag to infer. It creates this one at the checked-out commit.
+          tag_name: v${{ env.version }}
           files: dist/*
           generate_release_notes: true
           body_path: /tmp/release-notes.md

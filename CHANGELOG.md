@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- The Release workflow can be run manually from the Actions tab, typing the
+  version instead of pushing a tag. Some environments can push branches but not
+  tag refs, which left releases unreachable from them. The typed version is not
+  a convenience: it restores the third party to the agreement a tag push gets for
+  free, so both paths still assert tag/input, `pyproject.toml` and `__version__`
+  agree. A manual run also refuses to release from a non-default branch or to
+  re-use a tag that already exists.
 - `docs/DEPLOY.md` gains a section on enabling live broadcast: the two settings
   that must both hold, the checks that still stand between a hit and a spend,
   verifying the destination against a signed transaction rather than against the
