@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- `docs/DEPLOY.md` gains a section on enabling live broadcast: the two settings
+  that must both hold, the checks that still stand between a hit and a spend,
+  verifying the destination against a signed transaction rather than against the
+  config (nothing can tell you `AUTO_TRANSFER_DEST_ADDR` is *yours* — only that
+  it is well-formed), and the three arrangements for who actually sends.
+
 ## [0.8.0] — 2026-08-19
 
 Bring-up stops redoing itself, and `auto` becomes the visible path.
