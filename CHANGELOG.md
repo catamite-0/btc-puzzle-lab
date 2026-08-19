@@ -27,6 +27,10 @@ All notable changes to this project are documented here.
   `validate_relay_settings`, instead of posting an unsealable payload.
 - `watch` stops as idle when selected jobs are all prize-blocked, instead of
   spinning every few seconds.
+- `docs/DEPLOY.md` section 4 described the hub as having no TLS and being unsafe
+  to bind publicly. It now refuses a cleartext public bind outright, so the
+  section documents that refusal, the `https://`-unless-loopback rule, and
+  in-process TLS as a third (last-resort) way to serve it.
 - Hub ingest serializes `append_hit` (thread lock + `fcntl.flock`) so two
   concurrent POSTs cannot both pass dedupe and both sweep.
 - Public hub bind (`0.0.0.0`) requires `--tls-cert`/`--tls-key` or
