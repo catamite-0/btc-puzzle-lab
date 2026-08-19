@@ -10,7 +10,7 @@ This is a practice tool for **already-solved** catalog entries. It does **not** 
 
 Want it to just run? [docs/AUTO.md](docs/AUTO.md). Designing against the scheduling layer, or reusing the engine adapters elsewhere? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-**Release:** `v0.7.0` — `auto` hunt + `hub` control VPS (unseal, notify, sweep)
+**Release:** `v0.8.0` — per-host build cache, `auto`-first CLI, control-VPS deploy runbook
 
 ## Quick start
 
