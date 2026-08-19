@@ -21,7 +21,9 @@ _ADVANCED: dict[str, tuple[str, ...]] = {
     "the pipeline auto runs for you": (
         "import-catalog", "plan", "batch", "run", "once", "watch",
     ),
-    "control-VPS relay ops": ("relay-keygen", "unseal", "relay-flush", "verify-dry-run"),
+    # relay-keygen is deliberately absent: `hub` cannot start without the keypair
+    # it writes, so it belongs in the short list beside `hub`, not behind a flag.
+    "control-VPS relay ops": ("unseal", "relay-flush", "verify-dry-run"),
 }
 
 _ADVANCED_HELP = "more commands (btc-puzzle-lab <command> --help for each):\n" + "\n".join(
@@ -942,7 +944,10 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
 
     p_keygen = sub.add_parser(
         "relay-keygen",
-        help="create a seal keypair on the control VPS; copy only the pubkey to hunt boxes",
+        help=(
+            "create the seal keypair `hub` needs before it can start; "
+            "copy only the pubkey to hunt boxes"
+        ),
     )
     p_keygen.set_defaults(func=cmd_relay_keygen)
 

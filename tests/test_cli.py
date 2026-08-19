@@ -46,6 +46,15 @@ def test_help_leads_with_auto_and_hides_the_layers_below_it():
     assert hidden <= everything
 
 
+def test_hub_setup_is_reachable_without_help_all():
+    """`hub` raises FileNotFoundError pointing at relay-keygen when the keypair is
+    missing, so hiding relay-keygen behind a flag hides a prerequisite."""
+    from btc_puzzle_lab.cli import build_parser
+
+    listed = {a.dest for a in build_parser()._subparsers._group_actions[0]._choices_actions}
+    assert {"hub", "relay-keygen"} <= listed
+
+
 def test_hidden_commands_still_parse():
     from btc_puzzle_lab.cli import _ADVANCED, build_parser
 

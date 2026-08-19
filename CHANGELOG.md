@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Changed
+- `relay-keygen` moved into the short `--help` listing, beside `hub`. It is not
+  an advanced escape hatch: `hub` refuses to start without the keypair it writes
+  (`no relay secret at ... (run: btc-puzzle-lab relay-keygen)`), so grouping it
+  behind `--help-all` hid a prerequisite.
+
+### Changed
 - Solver checkouts and build trees are cached per host instead of per workspace
   (`BTC_PUZZLE_LAB_CACHE`, else `~/.cache/btc-puzzle-lab/vendor`), and a build
   already sitting in that tree is installed as-is. A second workspace on the same

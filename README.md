@@ -102,6 +102,7 @@ config → catalog → host → engine → target → build+verify → hunt
 | `auto <id>` | The above, end to end ([docs/AUTO.md](docs/AUTO.md)) |
 | `auto <id> --plan-only` | Print the engine decision and stop. Builds nothing, takes ~0.2s |
 | `config --dest … --notify …` | Store payout and alert once; later runs need only the id |
+| `relay-keygen` | Create the seal keypair `hub` needs before it can start |
 | `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
 
 Sweeps stay dry-run until you pass `--live`.
