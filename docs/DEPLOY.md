@@ -67,12 +67,22 @@ The token prints once — it is what hunt boxes authenticate with. Sweeps stay
 
 ## 4. Do not expose the hub directly
 
-`hub` is a plain `ThreadingHTTPServer`. There is no TLS, and authentication is a
-single bearer token. It also holds the key that unseals private keys. Binding it
-to a public interface puts a key-unsealing endpoint on the internet in
-cleartext, so it always binds to localhost and something else terminates TLS.
+`hub` holds the key that unseals private keys, and authenticates with a single
+bearer token. A cleartext public bind would put that endpoint, and that token, on
+the internet in the open — so it defaults to `127.0.0.1`, and `--host 0.0.0.0`
+is refused unless you either attach `--tls-cert`/`--tls-key` or say
+`--allow-insecure` out loud:
 
-Two ways. The tunnel is the better one.
+```
+error: public bind (0.0.0.0) requires --tls-cert/--tls-key or --allow-insecure
+       (prefer: bind 127.0.0.1 behind caddy/nginx)
+```
+
+`RELAY_URL` and notify webhooks are held to the same line: `https://` unless the
+host is loopback.
+
+Three ways to serve it, best first. Options A and B keep the localhost bind and
+let something in front do TLS; option C terminates TLS in the process.
 
 ### Option A — Cloudflare Tunnel (no public IP, no certificates, no open port)
 
@@ -126,6 +136,22 @@ relay.example.com {
 
 Caddy obtains a certificate automatically. Open 80 and 443 in the provider
 firewall and **nothing else** — in particular not 8787.
+
+### Option C — TLS in the hub process
+
+When there is no room for a proxy, `hub` can terminate TLS itself (TLS 1.2
+minimum). You supply the certificate; nothing here renews it, which is the
+reason this is the last option rather than the first.
+
+```bash
+btc-puzzle-lab hub --host 0.0.0.0 --port 8787 \
+    --tls-cert /etc/ssl/hub.crt --tls-key /etc/ssl/hub.key
+```
+
+`--allow-insecure` exists for the case where a proxy on the same host is already
+doing TLS and you still want a public bind. If you reach for it because the
+certificate is inconvenient, you have talked yourself into shipping the
+unseal endpoint in cleartext.
 
 ## 5. Keep the hub running
 

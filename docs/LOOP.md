@@ -33,7 +33,7 @@ Defaults for `once` / `watch`:
 | `--resource` | `auto` | `gpu` on GPU hosts, else `cpu` |
 | stop-on-hit | on | stop the slot after a hit |
 | audit | on | verify address↔key |
-| transfer | on | call `sweep_hit` (still disabled/dry-run unless `.env` says otherwise) |
+| transfer | on | call `sweep_hit` unless `RELAY_URL` is set (hub sweeps); still disabled/dry-run unless `.env` says otherwise |
 | `--max-seconds` | off | SIGTERM external solver after N seconds |
 
 `watch` extras: `--max-hours`, `--max-passes`, `--idle-sleep`, `--sync-every`.
@@ -54,6 +54,8 @@ Transfer uses the existing policy in [TRANSFER.md](TRANSFER.md):
 - `AUTO_TRANSFER_ENABLED=false` by default → sweep reports `skipped`
 - dry-run until you explicitly enable live confirm
 - `once --no-transfer` if you only want search + audit
+- `RELAY_URL` on a hunt box skips the local sweep (`once` / `watch` / `auto`),
+  same dest XOR relay rule as `config`
 
 ## Hit notifications
 

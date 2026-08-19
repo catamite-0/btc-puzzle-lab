@@ -22,9 +22,10 @@ def test_classify_tiers():
         classify_tier(cpus=8, mem_mb=16384, gpu=False, engines=frozenset()) == "compute"
     )
     assert classify_tier(cpus=2, mem_mb=2048, gpu=True, engines=frozenset()) == "gpu"
+    # A copied GPU binary does not make a CPU box a GPU host.
     assert (
         classify_tier(cpus=2, mem_mb=1024, gpu=False, engines=frozenset({"bitcrack"}))
-        == "gpu"
+        == "constrained"
     )
 
 

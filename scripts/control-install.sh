@@ -53,8 +53,9 @@ cat <<'EOF'
      The token prints once. Sweeps stay dry-run until you deliberately enable
      live broadcast — see docs/TRANSFER.md before you do.
 
-  3. Put the hub behind TLS and start it. It speaks plain HTTP and holds the
-     key that unseals private keys, so it must not be exposed directly:
+  3. Put the hub behind TLS and start it. It binds 127.0.0.1 by default and
+     refuses a cleartext public bind, because it holds the key that unseals
+     private keys. Tunnel, reverse proxy, or --tls-cert/--tls-key:
 
        docs/DEPLOY.md
 

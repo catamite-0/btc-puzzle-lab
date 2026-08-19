@@ -18,6 +18,28 @@ All notable changes to this project are documented here.
   config (nothing can tell you `AUTO_TRANSFER_DEST_ADDR` is *yours* — only that
   it is well-formed), and the three arrangements for who actually sends.
 
+### Fixed
+- `once` / `watch` skip the local sweep when `RELAY_URL` is set, matching
+  `auto --relay`. Dest+relay on a leftover hunt `.env` no longer signs twice.
+- CPU JeanLuc `kangaroo` now passes distinguished-point bits (`-d`);
+  `run_external_engine` defaults to `dp=30` so RCKangaroo self-check is not 16.
+- `RELAY_URL` without a valid `RELAY_SEAL_PUBKEY` fails `doctor` (hard) and
+  `validate_relay_settings`, instead of posting an unsealable payload.
+- `watch` stops as idle when selected jobs are all prize-blocked, instead of
+  spinning every few seconds.
+- `docs/DEPLOY.md` section 4 described the hub as having no TLS and being unsafe
+  to bind publicly. It now refuses a cleartext public bind outright, so the
+  section documents that refusal, the `https://`-unless-loopback rule, and
+  in-process TLS as a third (last-resort) way to serve it.
+- Hub ingest serializes `append_hit` (thread lock + `fcntl.flock`) so two
+  concurrent POSTs cannot both pass dedupe and both sweep.
+- Public hub bind (`0.0.0.0`) requires `--tls-cert`/`--tls-key` or
+  `--allow-insecure`. Default bind is `127.0.0.1`. `RELAY_URL` / notify
+  webhooks must be `https://` except localhost.
+- `classify_tier` / `plan_strategy` follow the GPU card, not installed
+  binaries. A CPU box with RCKangaroo on disk stays on the CPU queue;
+  compute-tier hosts name keyhunt, not bitcrack.
+
 ## [0.8.0] — 2026-08-19
 
 Bring-up stops redoing itself, and `auto` becomes the visible path.

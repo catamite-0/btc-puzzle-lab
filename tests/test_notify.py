@@ -94,6 +94,35 @@ def test_validate_relay_requires_token_when_url_is_set():
     assert any("RELAY_TOKEN" in err for err in errors)
 
 
+def test_validate_relay_rejects_public_http():
+    errors = validate_relay_settings(
+        RelaySettings(
+            url="http://203.0.113.8:8787/hit",
+            seal_pubkey="ab" * 32,
+            token="control-hub-token-1",
+        )
+    )
+    assert any("https://" in err for err in errors)
+    assert validate_relay_settings(
+        RelaySettings(
+            url="http://127.0.0.1:8787/hit",
+            seal_pubkey="ab" * 32,
+            token="control-hub-token-1",
+        )
+    ) == []
+
+
+def test_validate_relay_requires_pubkey_when_url_is_set():
+    errors = validate_relay_settings(
+        RelaySettings(
+            url="https://control.example:8787/hit",
+            seal_pubkey="",
+            token="control-hub-token-1",
+        )
+    )
+    assert any("RELAY_SEAL_PUBKEY" in err for err in errors)
+
+
 def test_notify_hit_posts_webhook(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()

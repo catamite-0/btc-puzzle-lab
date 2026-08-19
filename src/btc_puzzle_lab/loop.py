@@ -69,10 +69,8 @@ def resolve_resource_filter(
 ) -> Literal["cpu", "gpu", "any"]:
     if requested != "auto":
         return requested
-    # Only tier "gpu" implies a GPU path: classify_tier returns it whenever a card
-    # or a GPU solver is present, so tier "compute" means the opposite — a big CPU
-    # box with neither. Treating "compute" as a GPU host sent exactly those hosts
-    # into the "no GPU solver installed" abort below on every `once`.
+    # GPU slot follows the card (or an explicit gpu tier), never "a GPU binary
+    # happens to be installed". compute = high-CPU/no-card.
     return "gpu" if host.gpu or host.tier == "gpu" else "cpu"
 
 
@@ -210,6 +208,10 @@ def run_once(
     }
     transfer_by_id: dict[int, TransferResult] = {}
     relay_cfg = get_relay_settings()
+    # Hunt boxes post sealed hits to the hub; the hub sweeps. Local dest+relay
+    # would sign twice if both sides are live. `auto --relay` already passes
+    # transfer=False; once/watch must apply the same gate when RELAY_URL is set.
+    local_transfer = transfer and not relay_cfg.url
     if new_hit_ids:
         for hit in _hits_for_ids(new_hit_ids):
             result: AuditResult | None = None
@@ -229,7 +231,9 @@ def run_once(
             # silently skipped the sweep as well. A failed audit still blocks it;
             # with no audit at all, sweep_hit re-derives the address from the key
             # before it signs anything, so the address↔key check is never skipped.
-            if transfer and (result is None or (result.address_ok and not result.error)):
+            if local_transfer and (
+                result is None or (result.address_ok and not result.error)
+            ):
                 tr = sweep_hit(hit)
                 transfers.append(tr)
                 transfer_by_id[hit.puzzle_id] = tr
@@ -412,6 +416,11 @@ def run_watch(
                 break
             time.sleep(max(0.0, idle_sleep))
             continue
+        # select_ready_jobs can return ids that run_batch then prize-blocks.
+        # The prize will not come back; retrying a budgeted watch just spins.
+        if result.batch is not None and result.batch.attempted == 0:
+            reason = "idle"
+            break
         # External engine finished without a hit (or timed out): brief pause
         # then claim the same slot again unless budgets say stop.
         time.sleep(max(0.0, min(idle_sleep, 5.0)))

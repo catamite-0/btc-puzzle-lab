@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 from btc_puzzle_lab.cli import main
 from btc_puzzle_lab.hits import Hit, read_hits
-from btc_puzzle_lab.hub import ingest_sealed_hit, make_hub_server, parse_ingest_body
+from btc_puzzle_lab.hub import (
+    apply_hub_tls,
+    ingest_sealed_hit,
+    make_hub_server,
+    parse_ingest_body,
+    validate_hub_bind,
+)
 from btc_puzzle_lab.notify import notify_hit
 from btc_puzzle_lab.relay import generate_relay_keypair, seal_hit, write_relay_secret
 from btc_puzzle_lab.settings import NotifySettings, bootstrap_config, get_transfer_settings
@@ -196,6 +202,124 @@ def test_hub_http_requires_bearer_and_records_hit():
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=2)
+
+
+def test_concurrent_ingest_sweeps_once():
+    secret, pub = generate_relay_keypair()
+    write_relay_secret(secret)
+    hit = _practice_hit()
+    sweeps: list[Hit] = []
+    barrier = threading.Barrier(8)
+
+    def sweep_fn(item: Hit) -> TransferResult:
+        sweeps.append(item)
+        return TransferResult(status="dry_run", message="mocked")
+
+    def worker() -> None:
+        barrier.wait()
+        ingest_sealed_hit(_payload(hit, pub), sweep_fn=sweep_fn, notify=False)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(sweeps) == 1
+    assert len(read_hits()) == 1
+
+
+def test_public_bind_requires_tls_or_allow_insecure():
+    try:
+        validate_hub_bind("0.0.0.0")
+        raise AssertionError("public plaintext bind must fail")
+    except ValueError as exc:
+        assert "--allow-insecure" in str(exc)
+        assert "--tls-cert" in str(exc)
+    validate_hub_bind("127.0.0.1")
+    validate_hub_bind("0.0.0.0", allow_insecure=True)
+    try:
+        validate_hub_bind("0.0.0.0", tls_cert="/tmp/missing.pem")
+        raise AssertionError("cert without key must fail")
+    except ValueError as exc:
+        assert "together" in str(exc)
+
+
+def _self_signed_pair(tmp_path):
+    import subprocess
+
+    cert = tmp_path / "hub.crt"
+    key = tmp_path / "hub.key"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "1",
+            "-nodes",
+            "-subj",
+            "/CN=localhost",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return cert, key
+
+
+def test_hub_https_accepts_sealed_hit(tmp_path):
+    import ssl
+    import urllib.request
+
+    secret, pub = generate_relay_keypair()
+    write_relay_secret(secret)
+    cert, key = _self_signed_pair(tmp_path)
+    validate_hub_bind("127.0.0.1", tls_cert=str(cert), tls_key=str(key))
+    httpd = make_hub_server(
+        ("127.0.0.1", 0),
+        relay_token=_TOKEN,
+        sweep=False,
+        notify=False,
+        secret=secret,
+    )
+    apply_hub_tls(httpd, str(cert), str(key))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    _host, port = httpd.server_address
+    ctx = ssl._create_unverified_context()
+    try:
+        body = json.dumps(_payload(_practice_hit(), pub)).encode()
+        req = urllib.request.Request(
+            f"https://127.0.0.1:{port}/hit",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_TOKEN}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+            payload = json.loads(resp.read())
+        assert payload["ok"] is True
+        assert payload["status"] == "accepted"
+        assert "0000000000000000000000000000000000000000000000000000000000000001" not in json.dumps(
+            payload
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+def test_hub_cli_rejects_public_bind_without_tls(capsys):
+    assert main(["hub", "--host", "0.0.0.0", "--no-sweep"]) == 2
+    assert "--allow-insecure" in capsys.readouterr().err
 
 
 def test_hub_cli_requires_token(capsys):

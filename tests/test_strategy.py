@@ -13,8 +13,9 @@ def _host(
     cpus: int = 2,
     mem_mb: int = 2048,
     engines: set[str] | frozenset[str] | None = None,
+    gpu: bool = False,
 ) -> HostProfile:
-    return HostProfile(cpus=cpus, mem_mb=mem_mb, engines=frozenset(engines or ()))
+    return HostProfile(cpus=cpus, mem_mb=mem_mb, engines=frozenset(engines or ()), gpu=gpu)
 
 
 def test_tiny_puzzle_is_sequential():
@@ -38,7 +39,8 @@ def test_high_bits_prefer_window_without_external():
 
 def test_high_bits_prefer_bitcrack_before_keyhunt():
     plan = plan_strategy(
-        get_puzzle(40), host=_host(engines={"keyhunt", "bitcrack"}, cpus=4)
+        get_puzzle(40),
+        host=_host(engines={"keyhunt", "bitcrack"}, cpus=4, gpu=True),
     )
     assert plan.engine == "bitcrack"
     assert plan.resource == "gpu"
@@ -53,7 +55,11 @@ def test_high_bits_prefer_keyhunt_when_no_bitcrack():
 def test_pubkey_prefers_rckangaroo_over_bitcrack():
     plan = plan_strategy(
         get_puzzle(40),
-        host=_host(engines={"bitcrack", "keyhunt", "kangaroo", "rckangaroo"}, cpus=4),
+        host=_host(
+            engines={"bitcrack", "keyhunt", "kangaroo", "rckangaroo"},
+            cpus=4,
+            gpu=True,
+        ),
     )
     assert plan.engine == "rckangaroo"
     assert plan.dp == SAFE_DP
@@ -87,7 +93,17 @@ def test_unsolved_without_engines_names_address_algorithm():
     assert "KEYHUNT_PATH" in plan.reason
 
 
-def test_unsolved_compute_tier_prefers_bitcrack_algorithm():
+def test_cpu_host_with_rckangaroo_binary_stays_on_cpu_kangaroo():
+    """Installing a GPU solver must not move a CPU box onto the gpu queue."""
+    plan = plan_strategy(
+        get_puzzle(40),
+        host=_host(engines={"rckangaroo", "kangaroo", "keyhunt"}, cpus=8, mem_mb=16384),
+    )
+    assert plan.engine == "kangaroo"
+    assert plan.resource == "cpu"
+
+
+def test_unsolved_compute_tier_prefers_keyhunt_algorithm():
     puzzle = Puzzle(
         id=71,
         bits=71,
@@ -103,8 +119,8 @@ def test_unsolved_compute_tier_prefers_bitcrack_algorithm():
     plan = plan_strategy(
         puzzle, host=HostProfile(cpus=8, mem_mb=16384, engines=frozenset())
     )
-    assert plan.engine == "bitcrack"
-    assert "BITCRACK_PATH" in plan.reason
+    assert plan.engine == "keyhunt"
+    assert "KEYHUNT_PATH" in plan.reason
 
 
 def test_unsolved_pubkey_without_engines_names_kangaroo_algorithm():
@@ -121,14 +137,32 @@ def test_unsolved_pubkey_without_engines_names_kangaroo_algorithm():
         notes="",
     )
     plan = plan_strategy(puzzle, host=_host())
+    assert plan.engine == "kangaroo"
+    assert "KANGAROO_PATH" in plan.reason
+
+
+def test_unsolved_gpu_host_without_engines_names_rckangaroo():
+    puzzle = Puzzle(
+        id=135,
+        bits=135,
+        address="16RGFo6hjq9ym6Pj7N5H7L1NR1rVPJyw2v",
+        range_start=1 << 134,
+        range_end=(1 << 135) - 1,
+        pubkey_compressed_hex="02145d2611c823a396ef6712ce0f712f09b9b4f3135e3e0aa3230fb9b6d08d1e16",
+        practice_solution=None,
+        status="unsolved",
+        engine_default="window",
+        notes="",
+    )
+    plan = plan_strategy(puzzle, host=_host(gpu=True, cpus=8, mem_mb=16384))
     assert plan.engine == "rckangaroo"
-    assert "RCKANGAROO_PATH" in plan.reason
+    assert plan.resource == "gpu"
 
 
 def test_kangaroo_dp_defaults_to_safe_value(monkeypatch):
     # dp=16 fills a container's RAM with distinguished points in hours on a
     # wide range; the solver is OOM-killed and all accumulated work is lost.
-    host = _host(cpus=8, mem_mb=65536, engines={"rckangaroo"})
+    host = _host(cpus=8, mem_mb=65536, engines={"rckangaroo"}, gpu=True)
     puzzle = get_puzzle(40)
     assert plan_strategy(puzzle, host=host).engine == "rckangaroo"
     assert plan_strategy(puzzle, host=host).dp == SAFE_DP

@@ -185,10 +185,12 @@ def classify_tier(
     cpus: int,
     mem_mb: int,
     gpu: bool,
-    engines: frozenset[str],
+    engines: frozenset[str] = frozenset(),
 ) -> HostTier:
-    has_gpu_solver = bool(engines.intersection({"bitcrack", "rckangaroo"}))
-    if gpu or has_gpu_solver:
+    # Resource class follows the card, not installed binaries (ARCHITECTURE §5).
+    # A CPU box with RCKangaroo on disk is still a CPU host.
+    del engines
+    if gpu:
         return "gpu"
     if mem_mb >= STANDARD_MEM_MB and cpus >= 4:
         return "compute"
@@ -334,8 +336,10 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
     installed = profile.engines
 
     # Pubkey-class solvers first when bits are large enough.
+    # GPU engines only when a card is present — a copied RCKangaroo binary
+    # on a CPU box must not create idle gpu-queue jobs.
     if _has_pubkey(puzzle) and puzzle.bits >= PUBKEY_MIN_BITS:
-        if "rckangaroo" in installed:
+        if profile.gpu and "rckangaroo" in installed:
             return StrategyPlan(
                 engine="rckangaroo",
                 threads=threads,
@@ -387,8 +391,8 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
             reason=f"tier={profile.tier}: {puzzle.bits}-bit range; single-pass sequential",
         )
 
-    # Prefer GPU address search when host/tier indicates GPU capability.
-    if "bitcrack" in installed and puzzle.bits > SEQUENTIAL_BITS:
+    # Prefer GPU address search only when a card is present.
+    if profile.gpu and "bitcrack" in installed and puzzle.bits > SEQUENTIAL_BITS:
         return StrategyPlan(
             engine="bitcrack",
             tier=profile.tier,
@@ -431,21 +435,25 @@ def plan_strategy(puzzle: Puzzle, host: HostProfile | None = None) -> StrategyPl
 
     # Algorithm-first fallback for unsolved / no-binary hosts.
     if _has_pubkey(puzzle) and puzzle.bits >= PUBKEY_MIN_BITS:
+        engine = "rckangaroo" if profile.gpu else "kangaroo"
+        path_hint = (
+            "RCKANGAROO_PATH or KANGAROO_PATH"
+            if profile.gpu
+            else "KANGAROO_PATH or RCKANGAROO_PATH"
+        )
         return StrategyPlan(
-            engine="rckangaroo",
+            engine=engine,
             threads=threads,
             dp=dp,
             tier=profile.tier,
             reason=(
                 f"tier={profile.tier}: {puzzle.bits}-bit pubkey puzzle; "
-                "prefer RCKangaroo/Kangaroo (set RCKANGAROO_PATH or KANGAROO_PATH)"
+                f"prefer {engine} (set {path_hint})"
             ),
         )
-    # Algorithm-first when no solver is installed: GPU tiers name BitCrack,
-    # otherwise prefer CPU keyhunt so the board matches typical host capability.
-    preferred = (
-        "bitcrack" if profile.gpu or profile.tier in {"gpu", "compute"} else "keyhunt"
-    )
+    # Name the engine that matches the card, not the CPU tier. compute = big
+    # CPU box; treating it as BitCrack left gpu jobs idle on once --resource auto.
+    preferred = "bitcrack" if profile.gpu else "keyhunt"
     path_hint = (
         "BITCRACK_PATH or KEYHUNT_PATH"
         if preferred == "bitcrack"
@@ -476,7 +484,7 @@ def format_host_profile(profile: HostProfile | None = None) -> str:
         "tier meaning:",
         "  constrained : low RAM/CPU — small chunks, few workers",
         "  standard    : typical 2–8 GiB host — balanced local + external",
-        "  gpu         : NVIDIA or GPU solvers present — prefer BitCrack/RCKangaroo",
+        "  gpu         : NVIDIA card present — prefer BitCrack/RCKangaroo",
         "  compute     : high CPU/RAM — larger chunks/windows/threads",
         "",
         "env overrides: BTC_PUZZLE_LAB_CPUS, BTC_PUZZLE_LAB_MEM_MB, BTC_PUZZLE_LAB_GPU, "
