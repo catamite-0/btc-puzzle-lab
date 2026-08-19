@@ -197,9 +197,104 @@ If the notification does not arrive, you have found that out on a puzzle whose
 answer was already public, which is the entire point of doing this now.
 
 Only after all four pass is it worth pointing anything at an unsolved target,
-and only then is it worth reading [TRANSFER.md](TRANSFER.md) about `--live`.
+and only then is it worth reading the next section.
 
-## 7. Hunt boxes
+## 7. Turning on live broadcast
+
+Everything above leaves sweeps in **dry-run**: a hit is signed and written to
+`state/dryrun_*.txhex`, and nothing reaches the network. This is the only step
+that spends real money, so it is deliberately the last one and deliberately
+awkward to do by accident.
+
+### The switch
+
+Two settings must both hold. `AUTO_TRANSFER_DRY_RUN=false` on its own is not
+enough — the broadcast path checks the confirm phrase separately and returns
+`live broadcast blocked: missing AUTO_TRANSFER_LIVE_CONFIRM`.
+
+```ini
+AUTO_TRANSFER_DRY_RUN=false
+AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC
+```
+
+`btc-puzzle-lab config --dest <addr> --live` writes both.
+
+### What still stands between a hit and a broadcast
+
+Live does not mean unconditional. In order:
+
+| Check | Effect |
+|---|---|
+| The hit must audit | The hub derives the address from the key it just unsealed and compares. A mismatch is recorded and notified, never swept. |
+| Sealed payload is authoritative | A POST whose outer `puzzle_id` or `address` disagrees with the sealed content is rejected outright. |
+| Duplicates | An already-recorded hit is not swept a second time. |
+| `AUTO_TRANSFER_MIN_BALANCE_SATS` (5000) | Below this the UTXO set is left alone. |
+| `AUTO_TRANSFER_MIN_SEND_SATS` (546) | Refuses to create a dust output. |
+| `AUTO_TRANSFER_MAX_FEE_SATS` (100000) | Absolute ceiling on the fee, whatever the rate maths says. |
+| `AUTO_TRANSFER_MAX_FEE_RATE` (250 sat/vB) | Checked twice: once against the estimate, and again against `fee / vsize` of the transaction actually built — an estimate that looked sane cannot become an expensive transaction on the way out. |
+| `AUTO_TRANSFER_CONFIRMED_ONLY` (true) | Unconfirmed UTXOs are not spent. |
+| `AUTO_TRANSFER_RBF` (true) | Inputs signal replace-by-fee, so a stuck sweep can be re-fee'd. |
+
+### Confirm the destination against a real transaction first
+
+The one thing no check above can catch: whether `AUTO_TRANSFER_DEST_ADDR` is
+*your* address. The code validates that it is **a** well-formed Bitcoin address,
+not that it is yours. One wrong character that still forms a valid address sends
+the money to someone else, irreversibly.
+
+Reading the address off the screen is not the same as watching a signed
+transaction and confirming where it pays. While still in dry-run, produce one and
+check it:
+
+```bash
+btc-puzzle-lab verify-dry-run state/dryrun_<id>.txhex --check-dest
+```
+
+`--check-dest` asserts the output actually pays `AUTO_TRANSFER_DEST_ADDR` and
+clears the minimum-send floor. Do this before flipping the switch, not after.
+
+### Who pulls the trigger
+
+Automatic broadcast buys speed, which is the honest argument for it: the funded
+addresses in this puzzle series are watched, and a slow sweep can be front-run.
+
+The cost is that your control VPS becomes something that can spend money on its
+own. A compromise of the box, an edited `.env`, or a bad response from an
+explorer all end in a real transaction.
+
+There are three arrangements, and the switch above is only about the first.
+
+**Hub broadcasts.** Live enabled, `hub` started normally. A hit that audits is
+swept within seconds and you find out from the notification. Fastest, and the
+only one that works while you are asleep.
+
+**Hub signs, you send.** Leave `AUTO_TRANSFER_DRY_RUN=true` and let the hub
+sweep. It builds and signs the transaction into `state/dryrun_*.txhex` and
+notifies, but sends nothing. To release it you set the two live settings and run:
+
+```bash
+btc-puzzle-lab verify-dry-run state/dryrun_<id>.txhex --check-dest
+btc-puzzle-lab transfer --broadcast-dry-run state/dryrun_<id>.txhex
+```
+
+`--broadcast-dry-run` refuses unless both live settings are in place, and
+re-verifies the destination and the minimum send against the artifact before it
+goes out — so the address check happens again at the moment it matters, not only
+when you first configured it.
+
+**Hub only tells you.** `hub --no-sweep`, live enabled. The hub unseals, audits,
+records and notifies, and does not build a transaction at all. You sweep from
+scratch when you are ready:
+
+```bash
+btc-puzzle-lab transfer --puzzle <id>
+```
+
+The second and third both turn the delay into however long it takes you to read
+the alert and act. Whether that is acceptable depends on the target: a long-tail
+unsolved puzzle gives you all the time you need, a contested one may not.
+
+## 8. Hunt boxes
 
 Per rental, from [MACHINE.md](MACHINE.md) — or `china-bootstrap.sh` on a
 mainland-China box, which mirrors PyPI and GitHub and builds only RCKangaroo.
