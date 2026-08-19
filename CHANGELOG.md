@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- `docs/DEPLOY.md` separates what a control host must satisfy from one way of
+  satisfying it. Section 1 is now a requirements table (always on, outbound
+  HTTPS, Python 3.12+, ~50 MB RAM — measured, the hub idles at 39 MB and does not
+  grow under load) instead of a list of instance types. Section 4 describes three
+  TLS *shapes* — outbound tunnel, reverse proxy, in-process — with the trade-off
+  each carries, and moves the vendor-specific recipes into collapsed worked
+  examples. Section 5 states the four things any supervisor must give the hub,
+  with the systemd unit as one expression of them.
+  "Cloudflare" appeared 19 times in a document about deploying anywhere; it now
+  appears zero times outside a collapsed example.
+
 ### Added
 - The Release workflow can be run manually from the Actions tab, typing the
   version instead of pushing a tag. Some environments can push branches but not
