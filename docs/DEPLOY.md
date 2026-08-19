@@ -17,24 +17,36 @@ on the control VPS.
 
 ## 1. The box
 
-Any always-on Linux host with outbound HTTPS. It is a webhook receiver: it
-idles, and on a hit it does one unseal, one notification, and a few explorer
-calls. GCP `e2-micro`, Hetzner CX22, a $5 Vultr instance — all oversized.
+What it has to be:
 
-Ubuntu 24.04 keeps this shortest: it ships Python 3.12, which the package
-requires.
+| Requirement | Why |
+|---|---|
+| Always on | It is the thing a hunt box posts to. Asleep means a hit sits in an outbox |
+| Outbound HTTPS | It calls the notify channel and the block explorers |
+| Python 3.12+ | `requires-python` in `pyproject.toml` |
+| ~50 MB RAM, ~200 MB disk | Measured: the hub idles at 39 MB RSS and does not grow under load; the venv is 36 MB |
 
-**Do not run `machine-bootstrap.sh` here.** That script installs a compiler and
-builds keyhunt and kangaroo. A control host never searches, and building
-cryptocurrency solvers is exactly what free-tier acceptable-use clauses are
-written about. `control-install.sh` installs the Python package and nothing
-else — no gcc, no libgmp, no CUDA.
+That is the whole list. Any always-on Linux host clears it, and the smallest
+instance most providers sell clears it several times over — this is a webhook
+receiver that idles, then does one unseal, one notification and a few explorer
+calls when a hit arrives. Nothing below is provider-specific, and nothing needs
+to be: pick the host you already know how to operate.
+
+Install from a checkout of the default branch rather than a released wheel
+unless you have checked that the release contains the hub fixes you need — the
+hub has had correctness work land between tags.
 
 ```bash
 git clone https://github.com/catamite-0/btc-puzzle-lab.git
 cd btc-puzzle-lab
 bash scripts/control-install.sh
 ```
+
+**Do not run `machine-bootstrap.sh` here.** That script installs a compiler and
+builds keyhunt and kangaroo. A control host never searches, and building
+cryptocurrency solvers on a rented box is exactly what acceptable-use clauses
+are written about. `control-install.sh` installs the Python package and nothing
+else — no gcc, no libgmp, no CUDA.
 
 ## 2. Back up the seal secret before anything else
 
@@ -81,15 +93,28 @@ error: public bind (0.0.0.0) requires --tls-cert/--tls-key or --allow-insecure
 `RELAY_URL` and notify webhooks are held to the same line: `https://` unless the
 host is loopback.
 
-Three ways to serve it, best first. Options A and B keep the localhost bind and
-let something in front do TLS; option C terminates TLS in the process.
+The hunt boxes need to reach it over TLS. How you arrange that is yours to
+choose — there are three shapes, and the trade-off is the same whoever you buy
+from:
 
-### Option A — Cloudflare Tunnel (no public IP, no certificates, no open port)
+| Shape | You get | You owe |
+|---|---|---|
+| **Outbound tunnel** | No public IP, no inbound firewall rule, no certificate to renew | A dependency on a tunnel provider |
+| **Reverse proxy on the same host** | Ordinary, self-contained, no third party | An open 443, and a proxy to keep patched |
+| **TLS in the hub process** | Nothing else to install | You renew the certificate yourself; nothing here does it |
 
-`cloudflared` dials *out* to Cloudflare, so the box needs no inbound firewall
-rule and no static IP. On a cloud provider that bills for external addresses,
-that is also the one recurring cost removed. Cloudflare's edge stays reachable
-from networks where the origin would not be.
+The first two keep the localhost bind and let something in front terminate TLS.
+Only the third makes the hub itself listen publicly, which is why it is last.
+
+Whatever you pick, the finish line is the same and section 5 checks it: `hub`
+answers on `https://<your-host>/health`, and `ss -lntp` shows it bound to
+`127.0.0.1` unless you deliberately chose the third shape.
+
+<details>
+<summary><b>Worked example — outbound tunnel (cloudflared on Debian/Ubuntu)</b></summary>
+
+One concrete instance of the first shape. Tailscale Funnel, ngrok, frp or a
+WireGuard link to a box you already own all do the same job; substitute freely.
 
 ```bash
 curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
@@ -120,11 +145,10 @@ sudo cloudflared service install
 sudo systemctl enable --now cloudflared
 ```
 
-### Option B — Caddy on a public IP
+</details>
 
-```bash
-sudo apt-get install -y caddy
-```
+<details>
+<summary><b>Worked example — reverse proxy (Caddy)</b></summary>
 
 `/etc/caddy/Caddyfile`:
 
@@ -134,26 +158,38 @@ relay.example.com {
 }
 ```
 
-Caddy obtains a certificate automatically. Open 80 and 443 in the provider
-firewall and **nothing else** — in particular not 8787.
+Caddy obtains a certificate automatically; nginx or traefik need one arranging.
+Open 80 and 443 in the firewall and **nothing else** — in particular not 8787.
 
-### Option C — TLS in the hub process
+</details>
 
-When there is no room for a proxy, `hub` can terminate TLS itself (TLS 1.2
-minimum). You supply the certificate; nothing here renews it, which is the
-reason this is the last option rather than the first.
+<details>
+<summary><b>Worked example — TLS in the hub process</b></summary>
+
+TLS 1.2 minimum. You supply the certificate and you renew it.
 
 ```bash
 btc-puzzle-lab hub --host 0.0.0.0 --port 8787 \
     --tls-cert /etc/ssl/hub.crt --tls-key /etc/ssl/hub.key
 ```
 
-`--allow-insecure` exists for the case where a proxy on the same host is already
-doing TLS and you still want a public bind. If you reach for it because the
-certificate is inconvenient, you have talked yourself into shipping the
-unseal endpoint in cleartext.
+`--allow-insecure` exists for the case where something on the same host is
+already terminating TLS and you still want a public bind. If you reach for it
+because the certificate is inconvenient, you have talked yourself into serving
+the unseal endpoint in cleartext.
+
+</details>
 
 ## 5. Keep the hub running
+
+Whatever supervises services on your host needs to give the hub four things:
+start on boot, restart on failure, run as an unprivileged user, and write access
+to `state/` and `config/` and nowhere else. That last one matters because this
+process reads the seal secret and can sign transactions.
+
+The systemd unit below is one way to say that. On a host without systemd, say
+the same thing in runit, OpenRC, supervisord, or a container restart policy —
+the requirements are what carry over, not the file format.
 
 `/etc/systemd/system/btc-lab-hub.service`, with `User=` and the paths matching
 your install:
