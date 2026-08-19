@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-19
+
+Bring-up stops redoing itself, and `auto` becomes the visible path.
+
 ### Added
 - `docs/DEPLOY.md` and `scripts/control-install.sh` for the control VPS. The
   split between an always-on control host and disposable hunt boxes was designed
@@ -11,56 +15,58 @@ All notable changes to this project are documented here.
   skipped the compiler, no TLS guidance beyond one line printed at startup, no
   service unit, and nothing telling operators to back up `config/relay-secret` —
   the one unrecoverable artifact in the whole deployment.
-
-### Changed
-- `relay-keygen` no longer suggests `hub --host 0.0.0.0`. The hub speaks plain
-  HTTP and holds the key that unseals private keys; the suggested bind is now
-  localhost, with a pointer to the TLS setup. It also tells you to back the
-  secret up.
-
-### Changed
-- `relay-keygen` moved into the short `--help` listing, beside `hub`. It is not
-  an advanced escape hatch: `hub` refuses to start without the keypair it writes
-  (`no relay secret at ... (run: btc-puzzle-lab relay-keygen)`), so grouping it
-  behind `--help-all` hid a prerequisite.
+- `config --write-example` writes the annotated `config/.env.example` template.
+  A wheel install has no checkout, so the file `doctor` and the docs point at did
+  not exist there; the template ships as package data for exactly this. Refuses
+  to clobber an edited file without `--force`.
+- A test pins `config/.env.example` and the packaged `data/env.example`
+  byte-identical. They were duplicated with nothing keeping them in sync, so a
+  knob documented in one could quietly go missing from the other.
 
 ### Changed
 - Solver checkouts and build trees are cached per host instead of per workspace
   (`BTC_PUZZLE_LAB_CACHE`, else `~/.cache/btc-puzzle-lab/vendor`), and a build
   already sitting in that tree is installed as-is. A second workspace on the same
-  box copied the binaries in ~1s where it used to recompile everything. Existing
-  workspace `vendor/` directories keep being used, so provisioned hosts are
-  unaffected. `engines install --force` still rebuilds.
+  box copies the binaries in ~87ms where it used to spend 20.7s recompiling.
+  Existing workspace `vendor/` directories keep being used, so provisioned hosts
+  are unaffected. `engines install --force` still rebuilds.
 - The build-dependency gate only runs when something will actually be compiled,
   so reusing a cached build no longer demands `libgmp-dev` or an apt round-trip.
 - `auto` no longer re-solves a known puzzle on every run to verify the engine.
   A pass is recorded in `state/selfcheck.json` against the SHA-256 of the binary
-  that produced it; a matching digest is accepted, anything else is re-checked.
-  `engines selfcheck` always runs for real and refreshes the record.
-- Kangaroo builds with `make -j`, which is a 4× wall-clock cut on a 4-core box.
-  keyhunt and BitCrack stay serial on purpose — their recipes are shell command
-  lists, so make has nothing to schedule.
+  that produced it — and, for GPU engines, the detected compute capability — so a
+  rebuild, a new commit or a different card earns a fresh check while an unchanged
+  build does not. `engines selfcheck` always searches for real.
+- Kangaroo builds with `make -j` (13s to 3s on four cores). keyhunt and BitCrack
+  stay serial deliberately: their recipes are shell command lists, so make has
+  nothing to schedule — which is why artifact reuse, not parallelism, was the fix.
 - Kangaroo and BitCrack no longer `make clean` before every build. BitCrack still
   cleans when its Makefile is retargeted at a different CUDA toolkit or card,
-  which is the case where stale objects would actually be linked in.
+  which is when stale objects would actually be linked in.
+- CLI startup no longer imports the whole program. Command modules load inside
+  the handler that needs them, and `catalog_import` stopped pulling `requests`
+  just to hold a URL constant. `--version` went from 290ms to 100ms.
+- `--help` leads with `auto` and the commands around it. The rest — the layers
+  `auto` drives, plus the inspection surface — still parse and run but are grouped
+  by purpose behind `--help-all`. A flat 25-name wall was the first thing a new
+  machine printed.
+- `relay-keygen` sits in the short listing beside `hub`, which cannot start
+  without the keypair it writes, and no longer suggests `hub --host 0.0.0.0`:
+  the hub speaks plain HTTP and holds the key that unseals private keys, so the
+  suggested bind is localhost with a pointer to the TLS setup.
+- `host` is an alias of `adapt`, which was the same probe plus the advice.
 - Bootstrap scripts check for Python 3.12+ up front and name an interpreter to
   install, instead of failing inside pip after apt and a clone. `china-bootstrap`
   uses `.venv` like the other scripts (was `.venv-run`).
-
-- CLI startup no longer imports the whole program. Command modules load inside
-  the handler that needs them, and `catalog_import` stopped pulling `requests`
-  just to hold a URL constant. `--version` went from 290ms to 100ms, and every
-  other invocation with it.
-
-- `--help` leads with `auto` and the six commands around it. The other nineteen
-  are the layers `auto` drives plus the inspection surface; they still parse and
-  run, but they sit behind `--help-all` instead of being listed flat alongside
-  everything else. A 25-name wall was the first thing a new machine showed you.
-- `host` is an alias of `adapt`, which was the same probe plus the advice.
 - Every environment variable the code reads is now in `config/.env.example`.
   Fourteen were not, including the `*_REPO` mirrors `china-bootstrap.sh` relies on.
 
 ### Fixed
+- `auto --plan-only` built the solver before reporting that it had not searched,
+  though both its help text and the README promise it builds nothing. On a GPU box
+  that was minutes of nvcc to answer which engine would be picked. It now stops at
+  the decision: ~0.2s, nothing written. The test that should have caught this
+  asserted the build *had* happened, under the name "stops before building".
 - `auto` ignored `BTC_PUZZLE_LAB_ENGINE` / `_DP` / `_THREADS` and then overwrote
   them with its own choice for the run, while `strategy`, `run` and `plan` had
   always honoured them. `export BTC_PUZZLE_LAB_DP=30` before an `auto` run —
@@ -70,29 +76,15 @@ All notable changes to this project are documented here.
 - `data/puzzles.json` and `data/puzzle-tx-export.csv` were tracked in git as
   byte-identical copies of the package data, while `data/` is also where
   `import-catalog` writes — and `auto` calls that on every run. One `auto` in a
-  checkout left the tree dirty (139 → 1927 lines). `data/` is gitignored output
+  checkout left the tree dirty (139 to 1927 lines). `data/` is gitignored output
   now; the packaged copies are the only source.
-- `auto --plan-only` built the solver before reporting that it had not searched,
-  though both its help text and the README promise it builds nothing. On a GPU box
-  that was minutes of nvcc to answer which engine would be picked. It now stops at
-  the decision: ~0.2s, nothing written. The test that should have caught this
-  asserted the build *had* happened, under the name "stops before building".
 
 ### Removed
 - `audit_result_public_dict()`, unused since v0.2 and a second implementation of
   "what is safe to write out of an audit row" — a denylist (`asdict` then drop
-  `hit`) next to the allowlist `export_audit_report` actually uses. A new secret
+  `hit`) beside the allowlist `export_audit_report` actually uses. A new secret
   field on the dataclass would have leaked through the copy nothing exercised.
 - `paths.DATA_DIR`, an export nothing read.
-
-### Added
-- `config --write-example` writes the annotated `config/.env.example` template.
-  A wheel install has no checkout, so the file `doctor` and the docs point at did
-  not exist there; the template ships as package data for exactly this. Refuses
-  to clobber an edited file without `--force`.
-- A test pins `config/.env.example` and the packaged `data/env.example` to be
-  byte-identical. They were duplicated with nothing keeping them in sync, so a
-  knob documented in one could quietly go missing from the other.
 
 ## [0.7.0] — 2026-08-13
 
