@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- `docs/DEPLOY.md` and `scripts/control-install.sh` for the control VPS. The
+  split between an always-on control host and disposable hunt boxes was designed
+  into `auto --relay` but never written down: there was no install path that
+  skipped the compiler, no TLS guidance beyond one line printed at startup, no
+  service unit, and nothing telling operators to back up `config/relay-secret` —
+  the one unrecoverable artifact in the whole deployment.
+
+### Changed
+- `relay-keygen` no longer suggests `hub --host 0.0.0.0`. The hub speaks plain
+  HTTP and holds the key that unseals private keys; the suggested bind is now
+  localhost, with a pointer to the TLS setup. It also tells you to back the
+  secret up.
+
 ### Changed
 - `relay-keygen` moved into the short `--help` listing, beside `hub`. It is not
   an advanced escape hatch: `hub` refuses to start without the keypair it writes
