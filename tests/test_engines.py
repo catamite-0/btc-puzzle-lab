@@ -2,6 +2,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from btc_puzzle_lab.catalog import get_puzzle
 from btc_puzzle_lab.engines import (
     _append_result_files,
@@ -15,7 +17,12 @@ from btc_puzzle_lab.engines import (
 
 
 def test_parse_privkey_text_common_formats():
-    assert parse_privkey_text("PRIVATE KEY: 0000000000000000000000000000000000000000000000000000000000000015") == 0x15
+    assert (
+        parse_privkey_text(
+            "PRIVATE KEY: 0000000000000000000000000000000000000000000000000000000000000015"
+        )
+        == 0x15
+    )
     assert parse_privkey_text("Priv: 0xd2c55") == 0xD2C55
     assert parse_privkey_text("no key here") is None
 
@@ -146,6 +153,32 @@ def test_rckangaroo_cmd_shape(tmp_path: Path, monkeypatch):
     assert puzzle.pubkey_compressed_hex in result.cmdline
     assert "-start" in result.cmdline
     assert f"{puzzle.range_start:x}" in result.cmdline
+
+
+def test_rckangaroo_custom_subrange(tmp_path: Path, monkeypatch):
+    puzzle = get_puzzle(40)
+    fake = tmp_path / "RCKangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    start = puzzle.range_start + (1 << 38)
+    monkeypatch.setenv("BTC_PUZZLE_LAB_RCKANGAROO_START", f"{start:x}")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_RCKANGAROO_RANGE_BITS", "37")
+    result = run_external_engine(puzzle, "rckangaroo", progress=False)
+    assert result.cmdline[result.cmdline.index("-start") + 1] == f"{start:x}"
+    assert result.cmdline[result.cmdline.index("-range") + 1] == "37"
+
+
+def test_rckangaroo_custom_subrange_must_stay_inside_puzzle(tmp_path: Path, monkeypatch):
+    puzzle = get_puzzle(40)
+    fake = tmp_path / "RCKangaroo"
+    fake.write_text("#!/bin/sh\necho nope\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("RCKANGAROO_PATH", str(fake))
+    monkeypatch.setenv("BTC_PUZZLE_LAB_RCKANGAROO_START", f"{puzzle.range_end:x}")
+    monkeypatch.setenv("BTC_PUZZLE_LAB_RCKANGAROO_RANGE_BITS", "37")
+    with pytest.raises(ValueError, match="inside the puzzle range"):
+        run_external_engine(puzzle, "rckangaroo", progress=False)
 
 
 def test_bitcrack_cmd_shape(tmp_path: Path, monkeypatch):

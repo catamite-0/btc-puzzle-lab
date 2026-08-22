@@ -15,6 +15,7 @@ from btc_puzzle_lab.toolchain import (
     _write_engines_env,
     build_gencode,
     cached_selfcheck,
+    detect_compute_cap,
     ensure_build_deps,
     ensure_engine,
     format_install_results,
@@ -30,14 +31,34 @@ from btc_puzzle_lab.toolchain import (
 
 def test_build_gencode_dual_sass_and_ptx():
     assert build_gencode("120") == (
-        "-gencode arch=compute_120,code=sm_120 "
-        "-gencode arch=compute_120,code=compute_120"
+        "-gencode arch=compute_120,code=sm_120 -gencode arch=compute_120,code=compute_120"
     )
     try:
         build_gencode("12.0")
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_compute_cap_query_targets_the_selected_gpu(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-selected")
+    monkeypatch.setattr("btc_puzzle_lab.toolchain._which_ok", lambda _name: True)
+    monkeypatch.setattr(
+        "btc_puzzle_lab.toolchain._run",
+        lambda command: (calls.append(command), (0, "12.0\n"))[1],
+    )
+
+    assert detect_compute_cap() == "120"
+    assert calls == [
+        [
+            "nvidia-smi",
+            "-i",
+            "GPU-selected",
+            "--query-gpu=compute_cap",
+            "--format=csv,noheader",
+        ]
+    ]
 
 
 def test_write_engines_env_and_resolve(tmp_path, monkeypatch):
@@ -136,9 +157,7 @@ def test_install_engines_uses_stub_builders(tmp_path, monkeypatch):
 
 
 def test_format_install_results():
-    text = format_install_results(
-        [InstallResult("keyhunt", True, Path("/tmp/keyhunt"), "ok")]
-    )
+    text = format_install_results([InstallResult("keyhunt", True, Path("/tmp/keyhunt"), "ok")])
     assert "[ok] keyhunt" in text
 
 
@@ -160,9 +179,7 @@ def test_cli_engines_status_and_install(tmp_path, monkeypatch):
     monkeypatch.setattr("btc_puzzle_lab.toolchain.missing_build_headers", lambda: [])
     monkeypatch.setattr(
         "btc_puzzle_lab.toolchain.install_keyhunt",
-        lambda *, force=False: InstallResult(
-            "keyhunt", True, tmp_path / "bin" / "keyhunt", "stub"
-        ),
+        lambda *, force=False: InstallResult("keyhunt", True, tmp_path / "bin" / "keyhunt", "stub"),
     )
     # Ensure config write has a real file path
     bin_path = tmp_path / "bin" / "keyhunt"
@@ -316,6 +333,88 @@ def test_ensure_engine_short_circuits_on_an_existing_binary(tmp_path, monkeypatc
     assert result.binary == fake.resolve()
 
 
+def test_ensure_engine_verify_only_reports_a_missing_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("verify-only must not prepare or build an engine")
+
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.ensure_build_deps", explode)
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.install_engines", explode)
+
+    result = ensure_engine("keyhunt", allow_build=False)
+
+    assert not result.ok
+    assert not result.already_present
+    assert result.binary is None
+    assert "building is disabled" in result.message
+
+
+def test_ensure_engine_verify_only_handles_a_disappearing_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    fake = tmp_path / "bin" / "keyhunt"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+
+    def resolve_then_remove(_name):
+        fake.unlink()
+        return fake.resolve()
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("verify-only must not prepare, build, or run a missing binary")
+
+    monkeypatch.setattr("btc_puzzle_lab.engines.resolve_binary", resolve_then_remove)
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.needs_compile", explode)
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.ensure_build_deps", explode)
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.install_engines", explode)
+    monkeypatch.setattr("btc_puzzle_lab.toolchain.selfcheck_engine", explode)
+
+    result = ensure_engine("keyhunt", allow_build=False)
+
+    assert not result.ok
+    assert result.already_present
+    assert result.binary == fake.resolve()
+    assert "no longer executable" in result.message
+
+
+def test_verify_only_selfchecks_the_same_resolved_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    first = tmp_path / "first-keyhunt"
+    second = tmp_path / "second-keyhunt"
+    for path in (first, second):
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    resolved: list[Path] = []
+
+    def alternating(_name):
+        path = (first, second)[len(resolved)]
+        resolved.append(path)
+        return path
+
+    used: list[Path] = []
+    solution = get_puzzle(SELFCHECK_PUZZLES["keyhunt"]).practice_solution
+    monkeypatch.setattr("btc_puzzle_lab.engines.resolve_binary", alternating)
+    monkeypatch.setattr(
+        "btc_puzzle_lab.engines.run_external_engine",
+        lambda _puzzle, engine, **kwargs: (
+            used.append(kwargs["binary"]),
+            ExternalEngineResult(engine, solution, "stub"),
+        )[1],
+    )
+
+    result = ensure_engine("keyhunt", allow_build=False)
+
+    assert result.ok
+    assert resolved == [first]
+    assert used == [first]
+    assert result.binary == first
+
+
 def test_ensure_engine_reports_a_failed_selfcheck_as_not_usable(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
@@ -325,7 +424,7 @@ def test_ensure_engine_reports_a_failed_selfcheck_as_not_usable(tmp_path, monkey
     fake.chmod(0o755)
     monkeypatch.setattr(
         "btc_puzzle_lab.toolchain.selfcheck_engine",
-        lambda name, timeout=180.0: SelfCheckResult(name, False, 20, "returned no key"),
+        lambda name, **_kwargs: SelfCheckResult(name, False, 20, "returned no key"),
     )
     result = ensure_engine("keyhunt", selfcheck=True)
     assert not result.ok
@@ -437,9 +536,23 @@ def test_selfcheck_is_cached_against_the_exact_binary(tmp_path, monkeypatch):
     assert cached_selfcheck("keyhunt", binary) is None
 
 
-def test_gpu_selfcheck_cache_is_scoped_to_the_card(tmp_path, monkeypatch):
-    # Same binary, different compute capability: RCKangaroo would load no kernel
-    # and sit at 0 MKeys/s, which is exactly what the self-check is there to catch.
+def test_selfcheck_record_keeps_the_fingerprint_that_was_verified(tmp_path, monkeypatch):
+    monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
+    clear_path_cache()
+    binary = tmp_path / "keyhunt"
+    binary.write_text("replacement bytes", encoding="utf-8")
+
+    record_selfcheck(
+        "keyhunt",
+        binary,
+        SelfCheckResult("keyhunt", True, 20, "solved #20", 1.0),
+        verified_fingerprint="a" * 64,
+    )
+
+    assert cached_selfcheck("keyhunt", binary) is None
+
+
+def test_gpu_selfcheck_is_never_cached(tmp_path, monkeypatch):
     monkeypatch.setenv("BTC_PUZZLE_LAB_HOME", str(tmp_path))
     clear_path_cache()
     binary = tmp_path / "bin" / "RCKangaroo"
@@ -447,13 +560,9 @@ def test_gpu_selfcheck_cache_is_scoped_to_the_card(tmp_path, monkeypatch):
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
     binary.chmod(0o755)
 
-    monkeypatch.setattr("btc_puzzle_lab.toolchain.detect_compute_cap", lambda: "120")
     record_selfcheck(
         "rckangaroo", binary, SelfCheckResult("rckangaroo", True, 40, "solved #40", 3.0)
     )
-    assert cached_selfcheck("rckangaroo", binary) is not None
-
-    monkeypatch.setattr("btc_puzzle_lab.toolchain.detect_compute_cap", lambda: "89")
     assert cached_selfcheck("rckangaroo", binary) is None
 
 
@@ -478,19 +587,10 @@ def test_ensure_engine_skips_a_selfcheck_it_already_passed(tmp_path, monkeypatch
     binary.chmod(0o755)
     record_selfcheck("keyhunt", binary, SelfCheckResult("keyhunt", True, 20, "solved #20", 1.5))
 
-    def explode(name, timeout=180.0):
+    def explode(name, **_kwargs):
         raise AssertionError("cached pass should not re-run the search")
 
     monkeypatch.setattr("btc_puzzle_lab.toolchain.selfcheck_engine", explode)
     result = ensure_engine("keyhunt", selfcheck=True)
     assert result.ok
     assert result.selfcheck is not None and result.selfcheck.cached
-
-    # Opting out of the cache puts the real check back in the path.
-    monkeypatch.setattr(
-        "btc_puzzle_lab.toolchain.selfcheck_engine",
-        lambda name, timeout=180.0: SelfCheckResult(name, True, 20, "solved #20", 0.4),
-    )
-    fresh = ensure_engine("keyhunt", selfcheck=True, use_selfcheck_cache=False)
-    assert fresh.ok
-    assert fresh.selfcheck is not None and not fresh.selfcheck.cached

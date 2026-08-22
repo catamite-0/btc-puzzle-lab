@@ -356,9 +356,7 @@ def _clamp_dp(dp: int) -> int:
     return max(14, min(int(dp), 32))
 
 
-def _cmd_kangaroo(
-    binary: Path, puzzle: Puzzle, *, threads: int, dp: int
-) -> tuple[list[str], Path]:
+def _cmd_kangaroo(binary: Path, puzzle: Puzzle, *, threads: int, dp: int) -> tuple[list[str], Path]:
     tmp = Path(tempfile.mkdtemp(prefix="btc-puzzle-lab-kg-"))
     work = tmp / "work.txt"
     work.write_text(
@@ -387,15 +385,37 @@ def _cmd_rckangaroo(binary: Path, puzzle: Puzzle, *, dp: int) -> tuple[list[str]
         except OSError:
             shutil.copy2(cubin, tmp / cubin.name)
     # RCKangaroo: -range is bit-width of interval (= bits-1), -start is range_start.
+    # Optional paired overrides let multiple workers cover distinct power-of-two
+    # subranges without changing the puzzle catalog.
+    range_bits = max(32, puzzle.bits - 1)
+    range_start = puzzle.range_start
+    custom_start = os.environ.get("BTC_PUZZLE_LAB_RCKANGAROO_START", "").strip()
+    custom_bits = os.environ.get("BTC_PUZZLE_LAB_RCKANGAROO_RANGE_BITS", "").strip()
+    if bool(custom_start) != bool(custom_bits):
+        raise ValueError(
+            "BTC_PUZZLE_LAB_RCKANGAROO_START and "
+            "BTC_PUZZLE_LAB_RCKANGAROO_RANGE_BITS must be set together"
+        )
+    if custom_start:
+        try:
+            range_start = int(custom_start.removeprefix("0x"), 16)
+            range_bits = int(custom_bits, 10)
+        except ValueError as exc:
+            raise ValueError("invalid RCKangaroo custom interval") from exc
+        if not 32 <= range_bits <= 170:
+            raise ValueError("RCKangaroo custom range bits must be between 32 and 170")
+        range_end = range_start + (1 << range_bits) - 1
+        if range_start < puzzle.range_start or range_end > puzzle.range_end:
+            raise ValueError("RCKangaroo custom interval must stay inside the puzzle range")
     cmd = [
         str(binary),
         "-dp",
         # Upstream accepts 14..32; anything higher is rejected outright.
         str(_clamp_dp(dp)),
         "-range",
-        str(max(32, puzzle.bits - 1)),
+        str(range_bits),
         "-start",
-        f"{puzzle.range_start:x}",
+        f"{range_start:x}",
         "-pubkey",
         puzzle.pubkey_compressed_hex,
     ]
@@ -455,6 +475,7 @@ def run_external_engine(
     puzzle: Puzzle,
     engine: str,
     *,
+    binary: Path | None = None,
     threads: int = 2,
     dp: int = 30,  # keep in sync with strategy.SAFE_DP (cannot import: cycle)
     timeout: float | None = None,
@@ -471,8 +492,8 @@ def run_external_engine(
             None,
             f"{engine} needs bits>={spec.min_bits}; puzzle has {puzzle.bits}",
         )
-    binary = resolve_binary(engine)
-    if binary is None:
+    binary_path = binary if binary is not None else resolve_binary(engine)
+    if binary_path is None:
         return ExternalEngineResult(
             engine,
             None,
@@ -481,10 +502,10 @@ def run_external_engine(
         )
 
     builders = {
-        "keyhunt": lambda: _cmd_keyhunt(binary, puzzle, threads=threads),
-        "bitcrack": lambda: _cmd_bitcrack(binary, puzzle),
-        "kangaroo": lambda: _cmd_kangaroo(binary, puzzle, threads=threads, dp=dp),
-        "rckangaroo": lambda: _cmd_rckangaroo(binary, puzzle, dp=dp),
+        "keyhunt": lambda: _cmd_keyhunt(binary_path, puzzle, threads=threads),
+        "bitcrack": lambda: _cmd_bitcrack(binary_path, puzzle),
+        "kangaroo": lambda: _cmd_kangaroo(binary_path, puzzle, threads=threads, dp=dp),
+        "rckangaroo": lambda: _cmd_rckangaroo(binary_path, puzzle, dp=dp),
     }
     cmd, cwd = builders[engine]()
     try:

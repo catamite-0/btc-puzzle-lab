@@ -443,16 +443,17 @@ def detect_compute_cap() -> str | None:
     """Return COMPUTE_CAP like '86' from nvidia-smi, or None."""
     if not _which_ok("nvidia-smi"):
         return None
-    code, out = _run(
-        [
-            "nvidia-smi",
-            "--query-gpu=compute_cap",
-            "--format=csv,noheader",
-        ]
-    )
+    command = ["nvidia-smi"]
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible:
+        if "," in visible:
+            return None
+        command.extend(["-i", visible])
+    command.extend(["--query-gpu=compute_cap", "--format=csv,noheader"])
+    code, out = _run(command)
     if code != 0 or not out.strip():
         return None
-    # First GPU only; "8.6" -> "86"
+    # The selected GPU when pinned, otherwise the first GPU; "8.6" -> "86".
     first = out.strip().splitlines()[0].strip()
     if "." in first:
         major, _, minor = first.partition(".")
@@ -472,15 +473,14 @@ def build_gencode(compute_cap: str) -> str:
     if not cap.isdigit():
         raise ValueError(f"compute_cap must be digits like '120', got {compute_cap!r}")
     return (
-        f"-gencode arch=compute_{cap},code=sm_{cap} "
-        f"-gencode arch=compute_{cap},code=compute_{cap}"
+        f"-gencode arch=compute_{cap},code=sm_{cap} -gencode arch=compute_{cap},code=compute_{cap}"
     )
 
 
 def default_install_names() -> list[str]:
     names = ["keyhunt", "kangaroo"]
     if cuda_available():
-        names += ["bitcrack", "rckangaroo"]
+        names.append("bitcrack")
     return names
 
 
@@ -751,9 +751,7 @@ def install_rckangaroo(*, force: bool = False) -> InstallResult:
         )
     cuda_home = detect_cuda_home()
     if cuda_home is None:
-        return InstallResult(
-            "rckangaroo", False, None, "CUDA headers not found (set CUDA_HOME)"
-        )
+        return InstallResult("rckangaroo", False, None, "CUDA headers not found (set CUDA_HOME)")
 
     src_dir = vendor_dir() / "RCKangaroo"
     _clone_or_update(RCKANGAROO_REPO, src_dir, PINNED_COMMITS.get("rckangaroo"))
@@ -777,9 +775,7 @@ def install_rckangaroo(*, force: bool = False) -> InstallResult:
         code, out = _run(["cmake", "--build", "build", _make_jobs()], cwd=src_dir)
         built = _first_existing(src_dir, RCKANGAROO_BINARIES)
         if code != 0 or built is None:
-            return InstallResult(
-                "rckangaroo", False, None, f"build failed:\n{out[-2000:]}"
-            )
+            return InstallResult("rckangaroo", False, None, f"build failed:\n{out[-2000:]}")
     path = _install_link(built, "RCKangaroo")
 
     # RCKangaroo loads kernel_sm*.cubin from its working directory; engines.py links
@@ -832,17 +828,7 @@ def selfcheck_cache_path() -> Path:
     return workspace_root() / "state" / "selfcheck.json"
 
 
-# Engines whose self-check exercises the GPU. Same binary on a different card is
-# a different question: RCKangaroo silently sits at 0 MKeys/s when no prebuilt
-# kernel matches the compute capability, which is the failure the check exists to
-# catch. CPU engines have no such second variable.
 _GPU_SELFCHECK_ENGINES = ("bitcrack", "rckangaroo")
-
-
-def _selfcheck_host_key(name: str) -> str | None:
-    if name not in _GPU_SELFCHECK_ENGINES:
-        return None
-    return detect_compute_cap()
 
 
 def _binary_fingerprint(path: Path) -> str | None:
@@ -875,13 +861,15 @@ def cached_selfcheck(name: str, binary: Path) -> SelfCheckResult | None:
     host. A rebuild, a different commit or a swapped binary changes the digest and
     earns a fresh check.
     """
+    # A GPU self-check is tied to a physical device. Re-running the small known
+    # puzzle is simpler and safer than maintaining device-aware cache authority.
+    if name in _GPU_SELFCHECK_ENGINES:
+        return None
     entry = _load_selfcheck_cache().get(name)
     if not isinstance(entry, dict) or not entry.get("ok"):
         return None
     fingerprint = _binary_fingerprint(binary)
     if fingerprint is None or entry.get("sha256") != fingerprint:
-        return None
-    if entry.get("compute_cap") != _selfcheck_host_key(name):
         return None
     return SelfCheckResult(
         name=name,
@@ -893,14 +881,21 @@ def cached_selfcheck(name: str, binary: Path) -> SelfCheckResult | None:
     )
 
 
-def record_selfcheck(name: str, binary: Path, result: SelfCheckResult) -> None:
-    fingerprint = _binary_fingerprint(binary)
+def record_selfcheck(
+    name: str,
+    binary: Path,
+    result: SelfCheckResult,
+    *,
+    verified_fingerprint: str | None = None,
+) -> None:
+    if name in _GPU_SELFCHECK_ENGINES:
+        return
+    fingerprint = verified_fingerprint or _binary_fingerprint(binary)
     if fingerprint is None:
         return
     cache = _load_selfcheck_cache()
     cache[name] = {
         "sha256": fingerprint,
-        "compute_cap": _selfcheck_host_key(name),
         "ok": result.ok,
         "puzzle_id": result.puzzle_id,
         "seconds": round(result.seconds, 3),
@@ -915,7 +910,12 @@ def record_selfcheck(name: str, binary: Path, result: SelfCheckResult) -> None:
         pass
 
 
-def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
+def selfcheck_engine(
+    name: str,
+    *,
+    binary: Path | None = None,
+    timeout: float = 180.0,
+) -> SelfCheckResult:
     """Make the engine actually solve a puzzle whose answer we already know.
 
     A build that compiles and runs still tells you nothing: every engine in this
@@ -930,9 +930,12 @@ def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
     puzzle_id = SELFCHECK_PUZZLES.get(name)
     if puzzle_id is None:
         return SelfCheckResult(name, False, None, "no self-check defined for this engine")
-    binary = resolve_binary(name)
-    if binary is None:
+    binary_path = binary if binary is not None else resolve_binary(name)
+    if binary_path is None:
         return SelfCheckResult(name, False, puzzle_id, "not installed")
+    fingerprint = _binary_fingerprint(binary_path)
+    if fingerprint is None:
+        return SelfCheckResult(name, False, puzzle_id, "installed binary could not be read")
     try:
         puzzle = get_puzzle(puzzle_id)
     except (KeyError, ValueError) as exc:
@@ -943,7 +946,13 @@ def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
         )
 
     started = time.monotonic()
-    result = run_external_engine(puzzle, name, timeout=timeout, progress=False)
+    result = run_external_engine(
+        puzzle,
+        name,
+        binary=binary_path,
+        timeout=timeout,
+        progress=False,
+    )
     elapsed = time.monotonic() - started
 
     if result.secret is None:
@@ -960,7 +969,15 @@ def selfcheck_engine(name: str, *, timeout: float = 180.0) -> SelfCheckResult:
         )
     else:
         check = SelfCheckResult(name, True, puzzle_id, f"solved #{puzzle_id}", elapsed)
-    record_selfcheck(name, binary, check)
+    if _binary_fingerprint(binary_path) != fingerprint:
+        return SelfCheckResult(
+            name,
+            False,
+            puzzle_id,
+            "installed binary changed during the self-check",
+            elapsed,
+        )
+    record_selfcheck(name, binary_path, check, verified_fingerprint=fingerprint)
     return check
 
 
@@ -1065,16 +1082,17 @@ def ensure_engine(
     engine: str,
     *,
     force: bool = False,
+    allow_build: bool = True,
     install_deps: bool = True,
     selfcheck: bool = True,
     selfcheck_timeout: float = 180.0,
-    use_selfcheck_cache: bool = True,
 ) -> EnsureResult:
     """Get ``engine`` from "named" to "verified working", doing whatever is missing.
 
     Build deps → clone at the pinned commit → compile → install into ``bin/`` →
     solve a puzzle with a known answer. Each step is skipped when already
-    satisfied, so this is cheap to call on every run.
+    satisfied, so this is cheap to call on every run. With ``allow_build=False``,
+    only an already-installed binary may be verified; no preparation step runs.
     """
     from btc_puzzle_lab.engines import resolve_binary
 
@@ -1087,15 +1105,40 @@ def ensure_engine(
             message="built-in engine; no external toolchain needed",
         )
 
-    def _verify(binary: Path | None, *, already: bool, install: InstallResult | None,
-                deps: DepResult | None, note: str) -> EnsureResult:
+    def _verify(
+        binary: Path | None,
+        *,
+        already: bool,
+        install: InstallResult | None,
+        deps: DepResult | None,
+        note: str,
+    ) -> EnsureResult:
+        if binary is None or not binary.is_file() or not os.access(binary, os.X_OK):
+            return EnsureResult(
+                engine=engine,
+                ok=False,
+                already_present=already,
+                binary=binary,
+                message=f"{note}, but the binary is no longer executable",
+                deps=deps,
+                install=install,
+            )
+        fingerprint = _binary_fingerprint(binary)
+        if fingerprint is None:
+            return EnsureResult(
+                engine=engine,
+                ok=False,
+                already_present=already,
+                binary=binary,
+                message=f"{note}, but the binary could not be read",
+                deps=deps,
+                install=install,
+            )
         check = None
         if selfcheck and engine in SELFCHECK_PUZZLES:
-            check = None
-            if use_selfcheck_cache and binary is not None:
-                check = cached_selfcheck(engine, binary)
+            check = cached_selfcheck(engine, binary)
             if check is None:
-                check = selfcheck_engine(engine, timeout=selfcheck_timeout)
+                check = selfcheck_engine(engine, binary=binary, timeout=selfcheck_timeout)
             if not check.ok:
                 return EnsureResult(
                     engine=engine,
@@ -1109,6 +1152,17 @@ def ensure_engine(
                 )
             timing = "" if check.cached else f" in {check.seconds:.1f}s"
             note = f"{note}; self-check {check.message}{timing}"
+        if _binary_fingerprint(binary) != fingerprint:
+            return EnsureResult(
+                engine=engine,
+                ok=False,
+                already_present=already,
+                binary=binary,
+                message=f"{note}, but the binary changed during verification",
+                deps=deps,
+                install=install,
+                selfcheck=check,
+            )
         return EnsureResult(
             engine=engine,
             ok=True,
@@ -1121,8 +1175,17 @@ def ensure_engine(
         )
 
     existing = resolve_binary(engine)
-    if existing is not None and not force:
+    if existing is not None and (not force or not allow_build):
         return _verify(existing, already=True, install=None, deps=None, note="already installed")
+
+    if not allow_build:
+        return EnsureResult(
+            engine=engine,
+            ok=False,
+            already_present=False,
+            binary=None,
+            message=f"{engine} is not installed; building is disabled",
+        )
 
     if needs_compile(engine, force=force):
         deps = ensure_build_deps(engine, auto_install=install_deps)
