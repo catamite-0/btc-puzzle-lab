@@ -4,7 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from btc_puzzle_lab import __version__
-from btc_puzzle_lab.catalog import load_puzzles
+from btc_puzzle_lab.catalog import load_packaged_full_puzzles, load_puzzles
 from btc_puzzle_lab.engines import ENGINES
 from btc_puzzle_lab.paths import clear_path_cache, read_puzzles_json, workspace_root
 
@@ -77,14 +77,31 @@ def test_no_coinsense_hardcoded_paths():
 
 
 def test_packaged_catalog_is_practice_subset():
-    # Packaged default stays the small practice set; full catalogs are imported
-    # into workspace data/puzzles.json and intentionally may diverge.
-    pkg_copy = files("btc_puzzle_lab").joinpath("data/puzzles.json").read_text(
-        encoding="utf-8"
-    )
+    # The legacy load_puzzles fallback stays the small practice set. Autopilot's
+    # full loader independently reads the package CSV tested below.
+    pkg_copy = files("btc_puzzle_lab").joinpath("data/puzzles.json").read_text(encoding="utf-8")
     assert '"id": 20' in pkg_copy
     ids = {p.id for p in load_puzzles()}
     assert {1, 20, 40, 50}.issubset(ids)
+
+
+def test_packaged_full_catalog_is_available_without_workspace_import():
+    puzzles = load_packaged_full_puzzles()
+
+    assert len(puzzles) == 160
+    assert sum(puzzle.status == "unsolved" for puzzle in puzzles) == 78
+    assert {71, 140, 160}.issubset({puzzle.id for puzzle in puzzles})
+
+
+def test_packaged_full_catalog_ignores_workspace_csv_override():
+    workspace_csv = workspace_root() / "data" / "puzzle-tx-export.csv"
+    workspace_csv.parent.mkdir(parents=True)
+    workspace_csv.write_text("not,the,package,catalog\n", encoding="utf-8")
+
+    puzzles = load_packaged_full_puzzles()
+
+    assert len(puzzles) == 160
+    assert {71, 140, 160}.issubset({puzzle.id for puzzle in puzzles})
 
 
 def test_tests_never_run_against_the_real_checkout():
