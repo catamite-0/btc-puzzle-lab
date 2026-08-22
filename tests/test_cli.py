@@ -41,7 +41,8 @@ def test_help_leads_with_auto_and_hides_the_layers_below_it():
     assert not (listed & hidden), f"advanced commands still in the short help: {listed & hidden}"
 
     everything = {
-        a.dest for a in build_parser(hide_advanced=False)._subparsers._group_actions[0]._choices_actions
+        a.dest
+        for a in build_parser(hide_advanced=False)._subparsers._group_actions[0]._choices_actions
     }
     assert hidden <= everything
 
@@ -59,8 +60,14 @@ def test_hidden_commands_still_parse():
     from btc_puzzle_lab.cli import _ADVANCED, build_parser
 
     parser = build_parser()
-    needs_arg = {"verify": ["1"], "coverage": ["1"], "run": ["1"], "unseal": ["x"],
-                 "verify-dry-run": ["p"], "strategy": ["1"]}
+    needs_arg = {
+        "verify": ["1"],
+        "coverage": ["1"],
+        "run": ["1"],
+        "unseal": ["x"],
+        "verify-dry-run": ["p"],
+        "strategy": ["1"],
+    }
     for names in _ADVANCED.values():
         for name in names:
             args = parser.parse_args([name, *needs_arg.get(name, [])])
@@ -72,3 +79,64 @@ def test_host_is_an_alias_of_adapt():
 
     parser = build_parser()
     assert parser.parse_args(["host"]).func is parser.parse_args(["adapt"]).func
+
+
+def test_auto_plan_only_is_an_alias_of_plan():
+    from btc_puzzle_lab.cli import build_parser
+
+    parser = build_parser()
+    canonical = parser.parse_args(["auto", "71", "--plan"])
+    legacy = parser.parse_args(["auto", "71", "--plan-only"])
+    catalog_canonical = parser.parse_args(["auto", "--plan"])
+    catalog_legacy = parser.parse_args(["auto", "--plan-only"])
+
+    assert canonical.plan_only is True
+    assert legacy.plan_only is True
+    assert catalog_canonical.plan_only is True
+    assert catalog_legacy.plan_only is True
+    assert catalog_canonical.puzzle is None
+    assert catalog_legacy.puzzle is None
+    assert canonical.func is legacy.func
+    assert catalog_canonical.func is catalog_legacy.func
+
+
+def test_every_other_auto_option_is_explicitly_rejected_by_read_only_plan():
+    from btc_puzzle_lab.cli import _auto_plan_conflicts, build_parser
+
+    parser = build_parser()
+    auto_parser = parser._subparsers._group_actions[0].choices["auto"]
+    checked: set[str] = set()
+    for action in auto_parser._actions:
+        if action.dest in {"help", "puzzle", "plan_only"}:
+            continue
+        option = action.option_strings[0]
+        for prefix in (["auto", "--plan"], ["auto", "71", "--plan"]):
+            argv = [*prefix, option]
+            if action.nargs != 0:
+                if action.choices:
+                    argv.append(str(next(iter(action.choices))))
+                elif action.type in {int, float}:
+                    argv.append("1")
+                else:
+                    argv.append("test-value")
+            parsed = parser.parse_args(argv)
+            conflicts = _auto_plan_conflicts(parsed)
+
+            assert option in conflicts, f"{option} would be silently ignored by {' '.join(prefix)}"
+        checked.add(option)
+
+    assert {"--dest", "--live", "--engine", "--dp", "--no-build"} <= checked
+
+
+def test_auto_help_explains_optional_id_and_the_two_read_only_scopes():
+    from btc_puzzle_lab.cli import build_parser
+
+    parser = build_parser()
+    auto_parser = parser._subparsers._group_actions[0].choices["auto"]
+    help_text = auto_parser.format_help()
+    normalized = " ".join(help_text.split())
+
+    assert "[puzzle]" in help_text
+    assert "required unless --plan is used" in normalized
+    assert "without an id rank the package catalog" in normalized
+    assert "with an id" in normalized

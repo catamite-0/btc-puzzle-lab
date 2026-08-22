@@ -1,50 +1,43 @@
-"""Which algorithm should run this target on this host — inventory-blind.
+"""Inventory-blind engine selection shared by planning and ``auto``.
 
-``plan_strategy`` answers a different question: given the binaries that happen to
-be installed *right now*, what can run. That is the correct question for ``plan``
-and ``batch``, and the wrong one for ``auto``, whose whole job is to install
-whatever the answer turns out to be.
-
-Deciding from installed inventory also inverts the dependency (docs/ARCHITECTURE.md
-§5): installing RCKangaroo once moved puzzle #160 from the CPU queue to the GPU
-queue, because the resource class was read off ``available_engines()`` instead of
-following from the algorithm family. So this module derives the choice from
-``(target, host capability)`` alone and reports the build requirement separately.
-
-A missing capability yields ``blocked`` with an explicit remedy rather than a
-quiet relocation to another resource class.
+This module maps the pure autopilot assessments to the small ``EngineChoice``
+value consumed by the legacy runner. It does not inspect installed binaries,
+compilers, CUDA, or the network; those are preparation concerns handled after
+an algorithm family has been selected.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from btc_puzzle_lab.catalog import Puzzle
-from btc_puzzle_lab.search import MAX_SEQUENTIAL_KEYS
-from btc_puzzle_lab.strategy import (
-    PUBKEY_MIN_BITS,
-    SAFE_DP,
-    SEQUENTIAL_BITS,
-    HostProfile,
-    ResourceClass,
+from btc_puzzle_lab.autopilot.catalog_view import target_from_puzzle
+from btc_puzzle_lab.autopilot.facts import EngineName, HostCapabilities, ResourceClass
+from btc_puzzle_lab.autopilot.planning import (
+    AlgorithmAssessment,
+    Blocker,
+    BlockerCode,
+    PlanningPolicy,
+    ProvisioningPolicy,
+    assess_target_algorithms,
+    select_algorithm_for_comparison,
 )
-from btc_puzzle_lab.toolchain import cuda_available
+from btc_puzzle_lab.catalog import Puzzle
+from btc_puzzle_lab.strategy import SAFE_DP
+from btc_puzzle_lab.strategy import ResourceClass as LegacyResourceClass
 
-# GPU engine -> the CPU engine solving the same problem, for an explicit downgrade.
-_CPU_ALTERNATIVE = {
-    "rckangaroo": "kangaroo",
-    "bitcrack": "keyhunt",
-}
+_ENGINE_NAMES = frozenset(item.value for item in EngineName)
+_PIN_PREFERENCE_BLOCKERS = frozenset({BlockerCode.BUILTIN_RANGE_PREFERRED})
 
 
 @dataclass(frozen=True)
 class EngineChoice:
-    """One engine decision, plus everything ``auto`` needs to act on it."""
+    """One algorithm-family decision, detached from toolchain preparation."""
 
     engine: str
-    resource: ResourceClass
+    resource: LegacyResourceClass
     reason: str
-    needs_install: bool
+    provisioning: ProvisioningPolicy
+    device_id: str | None = None
     dp: int | None = None
     blocked: str | None = None
     remedy: str | None = None
@@ -53,6 +46,14 @@ class EngineChoice:
     def ok(self) -> bool:
         return self.blocked is None
 
+    @property
+    def needs_install(self) -> bool:
+        return self.provisioning is not ProvisioningPolicy.BUILT_IN
+
+    @property
+    def manual_provisioning(self) -> bool:
+        return self.provisioning is ProvisioningPolicy.MANUAL_REQUIRED
+
     def format(self) -> str:
         if not self.ok:
             lines = [f"blocked: {self.blocked}"]
@@ -60,124 +61,158 @@ class EngineChoice:
                 lines.append(f"  remedy: {self.remedy}")
             return "\n".join(lines)
         bits = [f"engine={self.engine}", f"resource={self.resource}"]
+        if self.device_id is not None:
+            bits.append(f"device={self.device_id}")
         if self.dp is not None:
             bits.append(f"dp={self.dp}")
-        bits.append("build=required" if self.needs_install else "build=not needed")
+        if self.provisioning is ProvisioningPolicy.BUILT_IN:
+            bits.append("build=not needed")
+        elif self.provisioning is ProvisioningPolicy.MANUAL_REQUIRED:
+            bits.append("provisioning=manual")
+        else:
+            bits.append("build=required")
         return f"{' '.join(bits)} — {self.reason}"
 
 
-def cpu_alternative(engine: str) -> str | None:
-    """The CPU engine that solves the same problem shape, if there is one."""
-    return _CPU_ALTERNATIVE.get(engine)
+def _device_id(assessment: AlgorithmAssessment) -> str | None:
+    return getattr(assessment.recipe, "device_id", None)
 
 
-def _blocked_on_cuda(engine: str, host: HostProfile) -> EngineChoice:
-    card = f" ({host.gpu_name})" if host.gpu_name else ""
-    fallback = cpu_alternative(engine)
-    remedy = (
-        "install the CUDA toolkit so nvcc is on PATH (Debian/Ubuntu: the NVIDIA "
-        "cuda-toolkit package), then re-run"
-    )
-    if fallback:
-        remedy += f"; or pass --allow-cpu-fallback to run {fallback} on the CPU instead"
+def _choice_from_assessment(
+    assessment: AlgorithmAssessment,
+    *,
+    reason: str,
+) -> EngineChoice:
+    engine = assessment.engine.value
     return EngineChoice(
         engine=engine,
-        resource="gpu",
-        reason=f"{engine} is the right engine for this target",
-        needs_install=True,
-        blocked=f"GPU detected{card} but no CUDA toolkit, so {engine} cannot be built",
-        remedy=remedy,
+        resource=assessment.resource.value,
+        reason=reason,
+        provisioning=assessment.provisioning,
+        device_id=_device_id(assessment),
+        dp=SAFE_DP if engine in {"kangaroo", "rckangaroo"} else None,
+    )
+
+
+def _blocked_choice(
+    assessment: AlgorithmAssessment,
+    blockers: tuple[Blocker, ...],
+    *,
+    reason: str,
+) -> EngineChoice:
+    unique = tuple(dict.fromkeys((item.code.value, item.detail, item.remedy) for item in blockers))
+    return EngineChoice(
+        engine=assessment.engine.value,
+        resource=assessment.resource.value,
+        reason=reason,
+        provisioning=assessment.provisioning,
+        device_id=_device_id(assessment),
+        dp=(SAFE_DP if assessment.engine in {EngineName.KANGAROO, EngineName.RCKANGAROO} else None),
+        blocked=(
+            "; ".join(f"{code}: {detail}" for code, detail, _remedy in unique)
+            or f"{assessment.engine.value} has no complete recipe for this target and host"
+        ),
+        remedy=(
+            "; ".join(dict.fromkeys(remedy for _code, _detail, remedy in unique))
+            or "choose a compatible engine"
+        ),
+    )
+
+
+def _no_choice(assessments: tuple[AlgorithmAssessment, ...]) -> EngineChoice:
+    remedies = tuple(
+        dict.fromkeys(
+            blocker.remedy for assessment in assessments for blocker in assessment.blockers
+        )
+    )
+    return EngineChoice(
+        engine="none",
+        resource="cpu",
+        reason="shared planner could not select an algorithm family",
+        provisioning=ProvisioningPolicy.BUILT_IN,
+        blocked="no compatible algorithm for this target and exact host",
+        remedy="; ".join(remedies) or "inspect the planner assessments",
+    )
+
+
+def _assess(
+    puzzle: Puzzle,
+    capabilities: HostCapabilities,
+    *,
+    policy: PlanningPolicy,
+) -> tuple[AlgorithmAssessment, ...]:
+    if type(capabilities) is not HostCapabilities:
+        raise TypeError("capabilities must be an exact HostCapabilities value")
+    return assess_target_algorithms(
+        target_from_puzzle(puzzle),
+        capabilities,
+        policy=policy,
     )
 
 
 def recommend_engine(
     puzzle: Puzzle,
-    host: HostProfile,
+    capabilities: HostCapabilities,
     *,
-    cuda: bool | None = None,
-    allow_cpu_fallback: bool = False,
+    cpu_only: bool = False,
 ) -> EngineChoice:
-    """Pick the engine for ``puzzle`` on ``host``, ignoring what is installed.
+    """Select the fastest viable algorithm family from exact host facts."""
 
-    ``cuda`` is the one capability that cannot be read off ``host``; it defaults to
-    probing for ``nvcc`` and is injectable so the policy stays testable without a
-    GPU box.
-    """
-    has_cuda = cuda_available() if cuda is None else cuda
-    has_pubkey = bool(puzzle.pubkey_compressed_hex)
-    span = puzzle.range_end - puzzle.range_start + 1
-
-    # 1. Ranges the bundled scanner can finish outright need no toolchain at all.
-    if puzzle.bits <= SEQUENTIAL_BITS and span <= MAX_SEQUENTIAL_KEYS:
-        return EngineChoice(
-            engine="sequential",
-            resource="cpu",
-            reason=(
-                f"{puzzle.bits}-bit range is {span:,} keys — the built-in scanner "
-                "covers it without an external solver"
-            ),
-            needs_install=False,
-        )
-
-    # 2. A known public key buys a square-root speedup, so kangaroo-class engines
-    #    beat any address brute force regardless of how fast the card is.
-    if has_pubkey and puzzle.bits >= PUBKEY_MIN_BITS:
-        if host.gpu:
-            if not has_cuda:
-                if not allow_cpu_fallback:
-                    return _blocked_on_cuda("rckangaroo", host)
-                return EngineChoice(
-                    engine="kangaroo",
-                    resource="cpu",
-                    reason=(
-                        f"{puzzle.bits}-bit pubkey target; GPU present but no CUDA "
-                        "toolkit, downgraded to the CPU kangaroo by --allow-cpu-fallback"
-                    ),
-                    needs_install=True,
-                    dp=SAFE_DP,
-                )
-            return EngineChoice(
-                engine="rckangaroo",
-                resource="gpu",
-                reason=(
-                    f"{puzzle.bits}-bit target with a known pubkey — GPU kangaroo is "
-                    "the fastest engine here"
-                ),
-                needs_install=True,
-                dp=SAFE_DP,
-            )
-        return EngineChoice(
-            engine="kangaroo",
-            resource="cpu",
-            reason=(
-                f"{puzzle.bits}-bit target with a known pubkey — Pollard kangaroo on "
-                "the CPU (no GPU on this host)"
-            ),
-            needs_install=True,
-            dp=SAFE_DP,
-        )
-
-    # 3. Address-only target: brute force the range.
-    if host.gpu:
-        if has_cuda:
-            return EngineChoice(
-                engine="bitcrack",
-                resource="gpu",
-                reason=(
-                    f"{puzzle.bits}-bit address-only target — GPU brute force "
-                    f"({host.gpu_name or 'CUDA device'})"
-                ),
-                needs_install=True,
-            )
-        if not allow_cpu_fallback:
-            return _blocked_on_cuda("bitcrack", host)
-
-    return EngineChoice(
-        engine="keyhunt",
-        resource="cpu",
-        reason=(
-            f"{puzzle.bits}-bit address-only target — keyhunt is the CPU address "
-            "search for this host"
-        ),
-        needs_install=True,
+    assessments = _assess(puzzle, capabilities, policy=PlanningPolicy())
+    candidates = (
+        tuple(item for item in assessments if item.resource is ResourceClass.CPU)
+        if cpu_only
+        else assessments
     )
+    selected = select_algorithm_for_comparison(candidates)
+    if selected is None:
+        return _no_choice(candidates)
+    reason = "shared planner selected the fastest viable algorithm family"
+    if cpu_only:
+        reason += "; restricted to CPU by --allow-cpu-fallback"
+    return _choice_from_assessment(selected, reason=reason)
+
+
+def recommend_pinned_engine(
+    puzzle: Puzzle,
+    engine: str,
+    *,
+    capabilities: HostCapabilities,
+    pin_source: str,
+) -> EngineChoice:
+    """Validate an explicit engine pin against the same planner assessments."""
+
+    if type(engine) is not str or engine not in _ENGINE_NAMES:
+        raise ValueError("pinned engine must be a planner EngineName")
+    if (
+        type(pin_source) is not str
+        or not pin_source
+        or pin_source != pin_source.strip()
+        or any(ord(character) < 32 for character in pin_source)
+    ):
+        raise ValueError("pin_source must be non-empty trimmed text")
+
+    assessments = _assess(
+        puzzle,
+        capabilities,
+        policy=PlanningPolicy(
+            allow_address_fallback_for_pubkey=True,
+            allow_manual_provisioning=True,
+        ),
+    )
+    selected_engine = EngineName(engine)
+    selected = next(item for item in assessments if item.engine is selected_engine)
+    hard_blockers = tuple(
+        blocker for blocker in selected.blockers if blocker.code not in _PIN_PREFERENCE_BLOCKERS
+    )
+    reason = f"pinned by {pin_source}"
+    if hard_blockers or selected.recipe is None or selected.estimate is None:
+        return _blocked_choice(selected, hard_blockers, reason=reason)
+    return _choice_from_assessment(selected, reason=reason)
+
+
+__all__ = [
+    "EngineChoice",
+    "recommend_engine",
+    "recommend_pinned_engine",
+]

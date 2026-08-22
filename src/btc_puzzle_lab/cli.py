@@ -19,7 +19,12 @@ _ADVANCED: dict[str, tuple[str, ...]] = {
     "catalog and inspection": ("list", "verify", "coverage", "status", "strategy", "adapt"),
     "solver toolchain": ("engines",),
     "the pipeline auto runs for you": (
-        "import-catalog", "plan", "batch", "run", "once", "watch",
+        "import-catalog",
+        "plan",
+        "batch",
+        "run",
+        "once",
+        "watch",
     ),
     # relay-keygen is deliberately absent: `hub` cannot start without the keypair
     # it writes, so it belongs in the short list beside `hub`, not behind a flag.
@@ -43,6 +48,13 @@ _ENGINE_CHOICES = [
     "sequential",
     "window",
     "inject-known",
+    "keyhunt",
+    "bitcrack",
+    "kangaroo",
+    "rckangaroo",
+]
+_AUTO_ENGINE_CHOICES = [
+    "sequential",
     "keyhunt",
     "bitcrack",
     "kangaroo",
@@ -202,9 +214,7 @@ def cmd_list(_: argparse.Namespace) -> int:
 
     print(f"{'ID':>4}  {'bits':>4}  {'engine':<12}  address")
     for puzzle in load_puzzles():
-        print(
-            f"{puzzle.id:>4}  {puzzle.bits:>4}  {puzzle.engine_default:<12}  {puzzle.address}"
-        )
+        print(f"{puzzle.id:>4}  {puzzle.bits:>4}  {puzzle.engine_default:<12}  {puzzle.address}")
         if puzzle.notes:
             print(f"      {puzzle.notes}")
     return 0
@@ -409,11 +419,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         status = "OK" if result.address_ok and not result.error else "FAIL"
         if status != "OK":
             failures += 1
-        balance = (
-            f"{result.balance_sats} sats"
-            if result.balance_sats is not None
-            else "n/a"
-        )
+        balance = f"{result.balance_sats} sats" if result.balance_sats is not None else "n/a"
         print(
             f"[{status}] puzzle #{result.hit.puzzle_id} "
             f"address={result.hit.address} balance={balance} engine={result.hit.engine}"
@@ -703,7 +709,107 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _auto_plan_conflicts(args: argparse.Namespace) -> tuple[str, ...]:
+    """Return legacy flags that the read-only planning slice cannot apply."""
+
+    value_flags = (
+        ("dest", "--dest"),
+        ("notify", "--notify"),
+        ("telegram_token", "--telegram-token"),
+        ("telegram_chat", "--telegram-chat"),
+        ("relay", "--relay"),
+        ("relay_seal_pubkey", "--relay-seal-pubkey"),
+        ("relay_token", "--relay-token"),
+        ("engine", "--engine"),
+        ("dp", "--dp"),
+        ("threads", "--threads"),
+        ("max_hours", "--max-hours"),
+        ("max_passes", "--max-passes"),
+        ("max_seconds", "--max-seconds"),
+        ("selfcheck_timeout", "--selfcheck-timeout"),
+    )
+    boolean_flags = (
+        ("live", "--live"),
+        ("allow_cpu_fallback", "--allow-cpu-fallback"),
+        ("ignore_swept", "--ignore-swept"),
+        ("no_sync", "--no-sync"),
+        ("no_build", "--no-build"),
+        ("no_install_deps", "--no-install-deps"),
+        ("no_selfcheck", "--no-selfcheck"),
+        ("no_progress", "--no-progress"),
+    )
+    conflicts = [flag for attribute, flag in value_flags if getattr(args, attribute) is not None]
+    conflicts.extend(flag for attribute, flag in boolean_flags if getattr(args, attribute))
+    return tuple(conflicts)
+
+
+def _cmd_auto_catalog_plan() -> int:
+    from btc_puzzle_lab.autopilot.catalog_preview import (
+        CatalogPreviewError,
+        CatalogPreviewOutcome,
+        build_catalog_preview,
+        production_catalog_preview_ports,
+    )
+
+    try:
+        report = build_catalog_preview(
+            ports=production_catalog_preview_ports(),
+        )
+    except CatalogPreviewError as exc:
+        print(
+            f"catalog plan failed [{exc.stage.value}/{exc.code.value}]: {exc.detail}",
+            file=sys.stderr,
+        )
+        print(f"remedy: {exc.remedy}", file=sys.stderr)
+        return 2
+
+    print(report.render_text())
+    return 0 if report.outcome is CatalogPreviewOutcome.SELECTED else 3
+
+
+def _cmd_auto_plan(args: argparse.Namespace) -> int:
+    conflicts = _auto_plan_conflicts(args)
+    if conflicts:
+        rendered = ", ".join(conflicts)
+        raise ValueError(
+            "auto --plan is read-only and cannot apply configuration or execution "
+            f"flags: {rendered}. Remove them for the preview; the current normal "
+            "auto command still accepts its execution overrides."
+        )
+
+    if args.puzzle is None:
+        return _cmd_auto_catalog_plan()
+
+    from btc_puzzle_lab.autopilot.pinned_plan import (
+        PinnedPlanError,
+        PinnedPlanOutcome,
+        build_pinned_plan,
+        production_pinned_plan_ports,
+    )
+
+    try:
+        report = build_pinned_plan(
+            args.puzzle,
+            ports=production_pinned_plan_ports(),
+        )
+    except PinnedPlanError as exc:
+        print(
+            f"plan failed [{exc.stage.value}/{exc.code.value}]: {exc.detail}",
+            file=sys.stderr,
+        )
+        print(f"remedy: {exc.remedy}", file=sys.stderr)
+        return 2
+
+    print(report.render_text())
+    return 0 if report.outcome is PinnedPlanOutcome.SELECTED else 3
+
+
 def cmd_auto(args: argparse.Namespace) -> int:
+    if args.plan_only:
+        return _cmd_auto_plan(args)
+    if args.puzzle is None:
+        raise ValueError("auto requires a puzzle id unless --plan is specified")
+
     from btc_puzzle_lab.autorun import STAGES, Stage, run_auto
     from btc_puzzle_lab.loop import format_watch_result
 
@@ -737,10 +843,9 @@ def cmd_auto(args: argparse.Namespace) -> int:
         build=not args.no_build,
         install_deps=not args.no_install_deps,
         selfcheck=not args.no_selfcheck,
-        selfcheck_timeout=args.selfcheck_timeout,
+        selfcheck_timeout=(args.selfcheck_timeout if args.selfcheck_timeout is not None else 180.0),
         dp=args.dp,
         threads=args.threads,
-        plan_only=args.plan_only,
         max_hours=args.max_hours,
         max_passes=args.max_passes,
         max_seconds=args.max_seconds,
@@ -813,8 +918,9 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
         description=(
             "Practice lab for Bitcoin Puzzle Transaction workflows.\n"
             "\n"
-            "Name a puzzle and `auto` does the rest: it reads the target, probes\n"
-            "this machine, picks the solver the two of them call for, builds and\n"
+            "Name a puzzle and `auto` does the rest; or use `auto --plan` for a\n"
+            "read-only full-catalog preview. Execution reads the target, probes\n"
+            "this machine, picks the solver the target and host call for, builds and\n"
             "verifies it, then hunts. The steps it runs are commands of their own\n"
             "for when you need to look inside — `--help-all` lists them."
         ),
@@ -833,19 +939,22 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
 
     p_auto = sub.add_parser(
         "auto",
-        help=(
-            "one command: pick the engine for this host, build it, and hunt "
-            "one puzzle unattended"
-        ),
+        help=("read-only catalog planning, or pick/build/run one named puzzle unattended"),
         description=(
-            "Configure once with --dest / --notify, then `auto <id>` probes the host, "
+            "`auto --plan` performs a read-only full-catalog preview. Configure once "
+            "with --dest / --notify, then `auto <id>` probes the host, "
             "picks the right solver, installs its build dependencies, clones and "
             "compiles it at a pinned commit, verifies it against a known answer, and "
             "runs the watch loop. A hit is audited, swept (dry-run unless --live) and "
             "announced on the notify channel."
         ),
     )
-    p_auto.add_argument("puzzle", type=int, help="puzzle id to hunt, e.g. 140")
+    p_auto.add_argument(
+        "puzzle",
+        type=int,
+        nargs="?",
+        help="puzzle id to hunt or pin for preview; required unless --plan is used",
+    )
     _add_dest_notify_relay_args(p_auto)
     p_auto.add_argument(
         "--live",
@@ -857,14 +966,17 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
     )
     p_auto.add_argument(
         "--engine",
-        choices=_ENGINE_CHOICES,
+        choices=_AUTO_ENGINE_CHOICES,
         default=None,
-        help="pin the engine instead of choosing one from the host profile",
+        help="pin a planner engine after validating it against the target and host",
     )
     p_auto.add_argument(
         "--allow-cpu-fallback",
         action="store_true",
-        help="if the GPU has no CUDA toolkit, run the CPU engine instead of stopping",
+        help=(
+            "if auto selected a GPU engine but its binary is missing and CUDA "
+            "is unavailable, choose CPU; explicit engine pins never fall back"
+        ),
     )
     p_auto.add_argument(
         "--ignore-swept",
@@ -872,9 +984,14 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
         help="search even when the target's prize has already been claimed",
     )
     p_auto.add_argument(
+        "--plan",
         "--plan-only",
+        dest="plan_only",
         action="store_true",
-        help="show the engine decision and stop before building or searching",
+        help=(
+            "read-only preview: without an id rank the package catalog; with an id "
+            "explain that target. Never configure, build, or search"
+        ),
     )
     p_auto.add_argument(
         "--no-sync",
@@ -884,7 +1001,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
     p_auto.add_argument(
         "--no-build",
         action="store_true",
-        help="assume the solver is already installed",
+        help="refuse to build; require the selected external solver to be installed",
     )
     p_auto.add_argument(
         "--no-install-deps",
@@ -899,7 +1016,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
     p_auto.add_argument(
         "--selfcheck-timeout",
         type=float,
-        default=180.0,
+        default=None,
         help="self-check budget in seconds (default: 180)",
     )
     p_auto.add_argument(
@@ -912,7 +1029,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
         "--threads",
         type=int,
         default=None,
-        help="override solver threads (default: from the host tier)",
+        help="override keyhunt/kangaroo CPU threads (default: from the host tier)",
     )
     p_auto.add_argument("--max-hours", type=float, default=None, help="stop after N hours")
     p_auto.add_argument("--max-passes", type=int, default=None, help="stop after N passes")
@@ -1026,8 +1143,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
         "--url",
         default=None,
         help=(
-            "download CSV from URL instead of the bundled export "
-            f"(example: {DEFAULT_EXPORT_URL})"
+            f"download CSV from URL instead of the bundled export (example: {DEFAULT_EXPORT_URL})"
         ),
     )
     p_import.add_argument(
@@ -1144,7 +1260,7 @@ def build_parser(*, hide_advanced: bool = True) -> argparse.ArgumentParser:
         default=None,
         help=(
             "comma-separated: keyhunt,kangaroo,bitcrack,rckangaroo "
-            "(default: CPU pair, plus the GPU pair when nvcc is present)"
+            "(default: CPU pair, plus BitCrack when nvcc is present)"
         ),
     )
     p_eng_install.add_argument(
