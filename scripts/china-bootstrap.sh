@@ -85,7 +85,7 @@ To leave it running for the rest of the rental:
 
   export BTC_PUZZLE_LAB_DP=30      # flat DP table; the default fills RAM in hours
   # This GPU box is a hunt worker. Post sealed hits to the always-on control VPS:
-  ./.venv/bin/btc-puzzle-lab auto 140 \
+  ./.venv/bin/btc-puzzle-lab auto 140 --engine rckangaroo \
       --relay https://<control-vps>:8787/hit \
       --relay-seal-pubkey <hex> \
       --relay-token <token>

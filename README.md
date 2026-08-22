@@ -6,9 +6,19 @@ Educational CLI lab for [Bitcoin Puzzle Transaction](https://privatekeys.pw/puzz
 catalog → search engine → state/HITS.jsonl → local audit → optional sweep transfer
 ```
 
-This is a practice tool for **already-solved** catalog entries. It does **not** promise unsolved-puzzle breakthroughs, mining income, or production key custody. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
+This is an engineering lab for the complete public Bitcoin Puzzle Transaction
+catalog: solved entries are reproducible practice fixtures, while unsolved
+entries can be checked and planned without pretending that brute force is a
+guaranteed source of income. It does **not** promise breakthroughs, mining
+income, or production key custody. See [SECURITY.md](SECURITY.md) and
+[CHANGELOG.md](CHANGELOG.md).
 
-Want it to just run? [docs/AUTO.md](docs/AUTO.md). Designing against the scheduling layer, or reusing the engine adapters elsewhere? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Want it to just run? [docs/AUTO.md](docs/AUTO.md). The read-only planning
+preview is available now; managed execution is not yet provided. The current
+planning boundary and follow-on principles are documented in
+[docs/AUTOPILOT.md](docs/AUTOPILOT.md). Designing against the scheduling layer,
+or reusing the engine adapters elsewhere? Start with
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **Release:** `v0.8.0` — per-host build cache, `auto`-first CLI, control-VPS deploy runbook
 
@@ -34,7 +44,8 @@ id. Sweeps stay **dry-run** until you pass `--live`. Full guide:
 [docs/AUTO.md](docs/AUTO.md).
 
 ```bash
-btc-puzzle-lab auto 140 --plan-only   # show the engine decision, build nothing
+btc-puzzle-lab auto --plan            # read-only full-catalog ranked preview
+btc-puzzle-lab auto 140 --plan        # read-only preview pinned to puzzle 140
 btc-puzzle-lab auto 140               # reuses the stored dest / notify
 ```
 
@@ -58,7 +69,7 @@ From a tagged release / wheel:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.7.0"
+python -m pip install "git+https://github.com/catamite-0/btc-puzzle-lab.git@v0.8.0"
 btc-puzzle-lab --version
 btc-puzzle-lab list
 ```
@@ -100,11 +111,18 @@ config → catalog → host → engine → target → build+verify → hunt
 | | |
 |---|---|
 | `auto <id>` | The above, end to end ([docs/AUTO.md](docs/AUTO.md)) |
-| `auto <id> --plan-only` | Print the engine decision and stop. Builds nothing, takes ~0.2s |
+| `auto --plan` | Read the complete package catalog, inspect this host, rank algorithmically selectable live targets, and check a bounded chain prefix until it can select or must stop |
+| `auto <id> --plan` | Pin the read-only target/chain/host/algorithm explanation to one puzzle (`--plan-only` aliases `--plan` in both forms) |
 | `config --dest … --notify …` | Store payout and alert once; later runs need only the id |
 | `relay-keygen` | Create the seal keypair `hub` needs before it can start |
 | deploy | Two-machine setup, TLS, systemd, chain test: [docs/DEPLOY.md](docs/DEPLOY.md) |
 | `hub` | Control VPS: receive sealed hits, unseal, notify, sweep |
+
+Normal `auto <id>` and the read-only preview now share the same pure target/host
+algorithm assessment and exact, cgroup-aware host discovery. Execution
+rediscovers the host and validates manual pins instead of promoting a preview
+report into authority. See [AUTOPILOT.md](docs/AUTOPILOT.md) for the ranking,
+chain-evidence, and read-only boundaries.
 
 Sweeps stay dry-run until you pass `--live`.
 
@@ -140,18 +158,21 @@ btc-puzzle-lab batch --limit 5 --stop-on-hit
 
 </details>
 
-### Environment adaptation
+### Lower-level environment adaptation
 
-Host is classified into a tier that drives workers / threads / chunk / window / dp:
+`adapt`, `once`, and `watch` classify the host into a tier that drives workers /
+threads / chunk / window / dp:
 
 | Tier | When | Effect |
 |---|---|---|
 | `constrained` | low RAM/CPU | small chunks, 1 worker |
 | `standard` | ~2+ GiB, 2+ CPU | balanced local + external |
-| `gpu` | NVIDIA detected or GPU solvers installed | prefer BitCrack / RCKangaroo |
+| `gpu` | NVIDIA detected | prefer BitCrack / RCKangaroo |
 | `compute` | high CPU/RAM | larger chunks/windows/threads |
 
-Overrides (container / CI friendly):
+These lower-level overrides are container / CI friendly. They do not replace
+the exact CPU, memory, and GPU discovery used by `auto` or its read-only
+preview:
 
 ```bash
 export BTC_PUZZLE_LAB_CPUS=4
@@ -164,10 +185,14 @@ Blocked jobs are intentional: preferred algorithm is recorded even when the solv
 
 ## Catalog
 
-Default install ships a small **practice** catalog (solved puzzles for pipeline drills).
+The package contains both a small `puzzles.json` practice view and the complete
+160-row CSV snapshot. Legacy inspection/run commands use the practice view
+until a workspace catalog is imported; read-only `auto --plan` and
+`auto <id> --plan` validate and read the complete package CSV directly, without
+writing a workspace copy.
 
-Import the **full** Bitcoin Puzzle Transaction list (160 entries). Default uses the
-CSV snapshot shipped inside the package; this writes workspace
+For legacy local runs, import the **full** Bitcoin Puzzle Transaction list.
+The default import uses the same package CSV and writes workspace
 `data/puzzles.json`, which overrides the packaged practice set for local runs.
 That path is gitignored output — `auto` rewrites it on every run.
 
@@ -280,11 +305,13 @@ Operators should not hand-wire someone else's binary path for the default CPU
 solvers. Install them into the workspace:
 
 ```bash
-# Debian/Ubuntu deps once (cmake only needed for rckangaroo):
-sudo apt install -y git build-essential libssl-dev libgmp-dev cmake
+# Debian/Ubuntu deps once:
+sudo apt install -y git build-essential libssl-dev libgmp-dev
 
 btc-puzzle-lab engines install              # → bin/ + config/engines.env, then self-checks
 btc-puzzle-lab engines install --only keyhunt
+# Explicit RCKangaroo provisioning before pinning it in auto (also needs cmake):
+btc-puzzle-lab engines install --only rckangaroo
 btc-puzzle-lab engines selfcheck            # re-verify installed solvers
 btc-puzzle-lab engines                      # status
 ```
@@ -296,8 +323,8 @@ exact package line for your distro, instead of failing deep inside `make`.
 |---|---|---|---|
 | `keyhunt` | `engines install` (albertobsd/keyhunt) | address | CPU address / range search |
 | `kangaroo` | `engines install` (JeanLucPons/Kangaroo, CPU) | compressed pubkey | Pollard kangaroo |
-| `bitcrack` | `engines install` when `nvcc` present | address | GPU address brute-force |
-| `rckangaroo` | `engines install` when `nvcc` present | compressed pubkey | GPU kangaroo (SOTA, fastest) |
+| `bitcrack` | `engines install` or automatic `auto` provisioning when `nvcc` is present | address | GPU address brute-force |
+| `rckangaroo` | provision explicitly before `auto` (`engines install --only rckangaroo` or `RCKANGAROO_PATH`) | compressed pubkey | GPU kangaroo |
 
 Built artifacts land in ignored `vendor/` + `bin/`. Paths are written to
 `config/engines.env` and auto-loaded. Explicit `*_PATH` env vars still override.
@@ -333,26 +360,23 @@ btc-puzzle-lab engines install --no-selfcheck   # skip it (leaves engines unveri
 
 This runs real searches, so it is a local-only command — never wire it into CI.
 
-`auto` verifies the engine on every run, but not by re-searching every time: a
-pass is recorded in `state/selfcheck.json` against the SHA-256 of the binary that
-produced it, and a matching digest is accepted without re-running. A rebuild, a
-different commit or a swapped binary changes the digest and earns a fresh check.
-`engines selfcheck` always searches for real and refreshes that record.
-
-For the GPU engines the record is scoped to the detected compute capability too,
-so moving a workspace to a different card re-verifies rather than trusting a
-kernel that may not load on it.
+`auto` caches passing CPU-engine checks in `state/selfcheck.json`, keyed by the
+binary SHA-256. A rebuild, different commit, or swapped binary earns a fresh
+check. GPU engines always rerun the small known-answer search because the same
+binary can behave differently on another card. `engines selfcheck` always
+searches for real.
 
 ```bash
 btc-puzzle-lab engines
 btc-puzzle-lab run 40 --auto
 btc-puzzle-lab run 40 --engine keyhunt
-# GPU (manual binary):
+# Optional explicit BitCrack binary override:
 export BITCRACK_PATH=/path/to/cuBitCrack
 btc-puzzle-lab run 40 --engine bitcrack
 ```
 
-`--auto` preference:
+The lower-level `run --auto` strategy is inventory-aware and is not the same as
+the exact-host planner used by `auto <id>`. Its preference is:
 
 1. pubkey + large bits: `rckangaroo` → `kangaroo`
 2. else address search: `bitcrack` → `keyhunt`
@@ -362,10 +386,10 @@ btc-puzzle-lab run 40 --engine bitcrack
 
 | Code | Meaning |
 |---:|---|
-| 0 | Success |
+| 0 | Success, including a read-only preview that produced a selection |
 | 1 | No hit / audit failure / transfer error |
-| 2 | Bad args / unknown puzzle / config error |
-| 3 | Transfer skipped by safety gates (disabled / policy) |
+| 2 | Bad args / unknown puzzle / config error / safely unavailable plan evidence |
+| 3 | Read-only preview completed without selection, or transfer skipped by safety gates |
 
 ## Validate
 

@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Changed
+- Normal `auto <id>` and the read-only previews now share one inventory-blind
+  target/host algorithm assessment. Normal execution discovers exact cgroup and
+  GPU facts, reserves one CPU core, validates manual engine pins, and binds GPU
+  preparation and self-checks to the selected device and binary.
+- RCKangaroo remains an explicitly provisioned engine; BitCrack may be built
+  automatically when CUDA is available. `--no-build` and manual RCK pins now
+  use a verify-only toolchain path that cannot fall through to a build.
 - `docs/DEPLOY.md` separates what a control host must satisfy from one way of
   satisfying it. Section 1 is now a requirements table (always on, outbound
   HTTPS, Python 3.12+, ~50 MB RAM — measured, the hub idles at 39 MB and does not
@@ -17,6 +24,10 @@ All notable changes to this project are documented here.
   appears zero times outside a collapsed example.
 
 ### Added
+- `auto --plan` provides a read-only, catalog-wide ranked preview, while
+  `auto <id> --plan` provides the corresponding pinned-target explanation.
+  Both use the complete package-owned catalog, exact host facts, and bounded
+  two-provider chain evidence without writing configuration or execution state.
 - The Release workflow can be run manually from the Actions tab, typing the
   version instead of pushing a tag. Some environments can push branches but not
   tag refs, which left releases unreachable from them. The typed version is not

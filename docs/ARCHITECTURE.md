@@ -6,9 +6,10 @@ run, and the numbers are measured on the reference host (RTX 5090, 64 cores,
 
 ## 1. What this repository actually is
 
-It contains no search algorithms. keyhunt, Kangaroo, BitCrack and RCKangaroo are
-independent upstream projects. What lives here is the **integration and
-scheduling layer** around them.
+The high-throughput solvers—keyhunt, Kangaroo, BitCrack and RCKangaroo—are
+independent upstream projects. The lab also contains small built-in reference
+searchers, but its main job is the **integration and scheduling layer** around
+the external engines.
 
 That distinction matters because it locates the defects. Every bug found in the
 hardening pass sat in the seam between the orchestrator and a solver, never in
@@ -101,8 +102,7 @@ Filled in from measurement:
 The scheduler reads this rather than guessing:
 
 - `restart == "destructive"` → never schedule a periodic recycle, never set a
-  wall-clock budget. The current `#160` job does exactly this wrong and loses its
-  table hourly; it is harmless only because that target is unreachable anyway.
+  wall-clock budget that would discard accumulated state.
 - `restart == "free"` → short passes are good. BitCrack random-window mode
   *wants* a fresh uniform start each pass.
 - `state_growth is not None` → the target's memory must be admitted before
@@ -110,9 +110,9 @@ The scheduler reads this rather than guessing:
 
 ## 5. Policy and inventory are separate
 
-The bug: installing RCKangaroo silently moved puzzle #160 from the CPU queue to
-the GPU queue, because `plan_strategy` decided the resource class from
-`available_engines()` (`strategy.py:301`).
+The original bug: installing RCKangaroo silently moved puzzle #160 from the CPU
+queue to the GPU queue because the strategy derived resource class from local
+engine inventory.
 
 ```python
 select_algorithm(target, policy) -> AlgorithmChoice   # pure, no IO
@@ -185,10 +185,10 @@ changes** (they imply a restart).
 
 ## 8. Calibrate → derive → admit
 
-Parameters currently live as tier constants — `min(cpus, 8)` threads, `dp` of
-14/16/18 by tier, no BitCrack grid at all. The tier abstraction itself is the
-problem: it compresses a host into four buckets and hands each a set of magic
-numbers, while the real constraints are continuous and coupled to the target.
+The lower-level runner still derives several parameters from host tiers, such as
+thread counts and the safe distinguished-point default. The tier abstraction
+compresses a host into four buckets, while the real constraints are continuous
+and coupled to the target.
 
 ```text
 calibrate(once per host)  →  calibration table
@@ -279,7 +279,7 @@ churning, and alerting on it teaches operators to ignore the channel.
 
 ## 10. Migration
 
-Each phase merges and reverts independently; the existing 119 tests are the net.
+Each phase merges and reverts independently; the existing test suite is the net.
 
 | Phase | Change | Payoff |
 |---|---|---|

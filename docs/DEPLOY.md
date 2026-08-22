@@ -279,7 +279,9 @@ AUTO_TRANSFER_DRY_RUN=false
 AUTO_TRANSFER_LIVE_CONFIRM=I_UNDERSTAND_THIS_BROADCASTS_REAL_BTC
 ```
 
-`btc-puzzle-lab config --dest <addr> --live` writes both.
+Set these two values directly in `config/.env` after the dry-run artifact and
+destination have been verified. The `config` command intentionally creates only
+dry-run transfer settings.
 
 ### What still stands between a hit and a broadcast
 
@@ -309,7 +311,8 @@ transaction and confirming where it pays. While still in dry-run, produce one an
 check it:
 
 ```bash
-btc-puzzle-lab verify-dry-run state/dryrun_<id>.txhex --check-dest
+DRYRUN_PATH='state/dryrun_<addr>_<fp16>.txhex'  # use the exact dry_run_path printed
+btc-puzzle-lab verify-dry-run "$DRYRUN_PATH" --check-dest
 ```
 
 `--check-dest` asserts the output actually pays `AUTO_TRANSFER_DEST_ADDR` and
@@ -335,8 +338,9 @@ sweep. It builds and signs the transaction into `state/dryrun_*.txhex` and
 notifies, but sends nothing. To release it you set the two live settings and run:
 
 ```bash
-btc-puzzle-lab verify-dry-run state/dryrun_<id>.txhex --check-dest
-btc-puzzle-lab transfer --broadcast-dry-run state/dryrun_<id>.txhex
+DRYRUN_PATH='state/dryrun_<addr>_<fp16>.txhex'  # use the exact dry_run_path printed
+btc-puzzle-lab verify-dry-run "$DRYRUN_PATH" --check-dest
+btc-puzzle-lab transfer --broadcast-dry-run "$DRYRUN_PATH"
 ```
 
 `--broadcast-dry-run` refuses unless both live settings are in place, and

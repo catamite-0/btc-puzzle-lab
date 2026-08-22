@@ -72,6 +72,11 @@ Optional BitCrack tuning (env):
 
 Start without grid overrides; only tune if `nvidia-smi` shows the card under-used.
 
+RCKangaroo workers can be assigned an exact power-of-two subrange by setting
+`BTC_PUZZLE_LAB_RCKANGAROO_START` (hex) together with
+`BTC_PUZZLE_LAB_RCKANGAROO_RANGE_BITS`. The interval is rejected unless it is
+fully contained in the selected puzzle range.
+
 Manual board (same strategy under the hood):
 
 ```bash
@@ -92,7 +97,7 @@ Keep dry-run until verified. See [TRANSFER.md](TRANSFER.md).
 ```bash
 # no checkout (wheel install)? btc-puzzle-lab config --write-example
 cp config/.env.example config/.env
-# set DEST_ADDR; leave DRY_RUN=true
+# set AUTO_TRANSFER_DEST_ADDR; leave AUTO_TRANSFER_DRY_RUN=true
 btc-puzzle-lab transfer --verify-dry-run
 ```
 
